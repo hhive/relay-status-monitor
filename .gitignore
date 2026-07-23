@@ -55,6 +55,8 @@ Commonality.md
 **/*.test.ts
 **/*.test.tsx
 **/__tests__/
+!/tests/
+!/tests/**
 /backups/
 *.dump
 *.sqlite
