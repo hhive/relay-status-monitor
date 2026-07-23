@@ -47,10 +47,7 @@ export async function POST(_req: Request, { params }: Params) {
       results,
       ...summary,
     });
-  } catch (error) {
-    return NextResponse.json(
-      { error: '刷新失败: ' + (error as Error).message },
-      { status: 500 }
-    );
+  } catch {
+    return NextResponse.json({ error: '上游刷新失败' }, { status: 500 });
   }
 }

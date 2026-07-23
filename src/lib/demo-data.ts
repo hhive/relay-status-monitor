@@ -95,16 +95,11 @@ export interface DemoDataset {
   settings: Record<string, string>;
 }
 
-export interface DemoDatasetOptions {
-  cronSecret?: string;
-}
-
 export interface DemoSeedEnvironment {
   databaseUrl: string;
   appEncryptionKey: string;
   sessionSecret: string;
   demoAdminPassword: string;
-  demoCronSecret: string;
 }
 
 export function requireSeedValue(
@@ -124,7 +119,6 @@ export function readDemoSeedEnvironment(
     appEncryptionKey: requireSeedValue(environment, 'APP_ENCRYPTION_KEY'),
     sessionSecret: requireSeedValue(environment, 'SESSION_SECRET'),
     demoAdminPassword: requireSeedValue(environment, 'DEMO_ADMIN_PASSWORD'),
-    demoCronSecret: requireSeedValue(environment, 'DEMO_CRON_SECRET'),
   };
 }
 
@@ -334,7 +328,6 @@ function buildIncidents(keys: DemoKeyRecord[], referenceDate: Date): DemoInciden
 
 export function buildDemoDataset(
   referenceDate: Date,
-  options: DemoDatasetOptions = {}
 ): DemoDataset {
   const now = new Date(referenceDate.getTime());
   if (Number.isNaN(now.getTime())) throw new Error('演示数据参考时间无效');
@@ -381,7 +374,7 @@ export function buildDemoDataset(
       {
         name: '演示告警通道',
         type: 'feishu',
-        config: { webhookUrl: 'https://hooks.example/relay-status-demo', secret: '' },
+        config: { webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/demo-disabled' },
         enabled: false,
       },
     ],
@@ -392,7 +385,6 @@ export function buildDemoDataset(
       test_timeout_ms: '15000',
       retention_days: '90',
       timezone: 'Asia/Shanghai',
-      cron_secret: options.cronSecret?.trim() || 'demo-cron-secret-change-me',
       demo_mode: 'true',
     },
   };

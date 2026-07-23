@@ -11,6 +11,9 @@
 import { createHmac } from 'crypto';
 import type { AlertChannel, Upstream, UpstreamKey } from '@prisma/client';
 import { prisma } from '../../db';
+import { openAlertChannelConfig } from '../../alert-channel-config';
+import { fetchCredentialed, validateFeishuWebhookUrl } from '../../outbound';
+import { safeErrorMessage } from '../../safe-error';
 
 interface IncidentLike {
   id: number;
@@ -20,11 +23,6 @@ interface IncidentLike {
   severity: string;
   message: string;
   metricValue?: number | null;
-}
-
-interface FeishuConfig {
-  webhookUrl: string;
-  secret?: string;
 }
 
 /** 发送告警通知到所有启用的渠道 */
@@ -39,9 +37,14 @@ export async function sendNotification(
     console.log('[告警] 无启用的通知渠道，跳过发送:', incident.message);
     return;
   }
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     channels.map((ch) => sendToChannel(ch, incident, upstream, key, isRecovery))
   );
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      console.error('[告警] 渠道发送失败:', safeErrorMessage(result.reason));
+    }
+  }
 }
 
 async function sendToChannel(
@@ -53,7 +56,7 @@ async function sendToChannel(
 ): Promise<void> {
   switch (channel.type) {
     case 'feishu':
-      await sendFeishu(channel.config as unknown as FeishuConfig, incident, upstream, key, isRecovery);
+      await sendFeishu(openAlertChannelConfig(channel.config).config, incident, upstream, key, isRecovery);
       break;
     default:
       console.warn(`[告警] 未知渠道类型: ${channel.type}`);
@@ -62,7 +65,7 @@ async function sendToChannel(
 
 /** 发送飞书交互式卡片 */
 async function sendFeishu(
-  config: FeishuConfig,
+  config: { webhookUrl: string; secret?: string },
   incident: IncidentLike,
   upstream: Upstream,
   key: UpstreamKey | null,
@@ -114,20 +117,23 @@ async function sendFeishu(
     body.sign = genSign(timestamp, config.secret);
   }
 
-  const res = await fetch(config.webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const webhookUrl = validateFeishuWebhookUrl(config.webhookUrl);
+  const outbound = await fetchCredentialed(
+    webhookUrl,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    10_000,
+  );
+  if (!outbound.ok) throw new Error(outbound.error.message);
+  const res = outbound.response;
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`飞书 Webhook 发送失败: HTTP ${res.status} ${text.slice(0, 200)}`);
-  }
-
-  const result = (await res.json().catch(() => ({}))) as { code?: number; msg?: string };
-  if (result.code && result.code !== 0) {
-    throw new Error(`飞书返回错误: code=${result.code} msg=${result.msg}`);
+  if (!res.ok) throw new Error(`飞书 Webhook 发送失败: HTTP ${res.status}`);
+  const responseBody = await res.json().catch(() => null) as { code?: unknown } | null;
+  if (typeof responseBody?.code === 'number' && responseBody.code !== 0) {
+    throw new Error(`飞书返回错误: code=${responseBody.code}`);
   }
 }
 

@@ -5,6 +5,8 @@ import { tryDecrypt } from './crypto';
 import { getCollectConfig } from './settings';
 import { mergeKeyMetadata } from './key-metadata';
 import type { Upstream, UpstreamKey, UpstreamType } from '@prisma/client';
+import { validateUpstreamBaseUrl } from './outbound';
+import { safeStoredError } from './safe-error';
 
 export type MetadataKeyRecord = UpstreamKey & {
   upstream: Pick<Upstream, 'baseUrl' | 'type' | 'testModel'>;
@@ -30,6 +32,17 @@ export function createKeyMetadataService(deps: KeyMetadataServiceDependencies) {
           key,
           result: { ok: false, errorMessage: '仅支持 NEW_API 上游的元数据刷新' } satisfies KeyMetadataResult,
         };
+      }
+
+      try {
+        validateUpstreamBaseUrl(key.upstream.type, key.upstream.baseUrl);
+      } catch (error) {
+        const result: KeyMetadataResult = {
+          ok: false,
+          errorMessage: safeStoredError(error),
+        };
+        const updated = await deps.updateKey(key.id, { metadataError: result.errorMessage });
+        return { key: updated, result };
       }
 
       const apiKey = key.apiKeyEnc ? deps.decrypt(key.apiKeyEnc) : null;
@@ -61,7 +74,7 @@ export function createKeyMetadataService(deps: KeyMetadataServiceDependencies) {
       try {
         result = await adapter.fetchKeyMetadata(ctx);
       } catch (error) {
-        result = { ok: false, errorMessage: safeErrorMessage(error) };
+        result = { ok: false, errorMessage: safeStoredError(error) };
       }
 
       if (!result.ok) {
@@ -106,8 +119,4 @@ const defaultService = createKeyMetadataService({
 
 export async function refreshKeyMetadata(keyId: number) {
   return defaultService.refresh(keyId);
-}
-
-function safeErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

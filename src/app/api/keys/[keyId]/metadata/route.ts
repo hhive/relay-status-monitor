@@ -26,11 +26,7 @@ export async function POST(_request: Request, { params }: Params) {
       );
     }
     return NextResponse.json({ key, metadataRefresh: refreshed.result });
-  } catch (error) {
-    const message = (error as Error).message;
-    return NextResponse.json(
-      { error: message },
-      { status: message === 'Key 不存在' ? 404 : 500 }
-    );
+  } catch {
+    return NextResponse.json({ error: '元数据刷新失败' }, { status: 500 });
   }
 }

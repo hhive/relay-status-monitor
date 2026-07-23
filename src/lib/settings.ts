@@ -48,21 +48,7 @@ export const SettingKeys = {
   TEST_TIMEOUT_MS: 'test_timeout_ms',           // 测试超时
   RETENTION_DAYS: 'retention_days',             // 数据保留天数
   TIMEZONE: 'timezone',
-  CRON_SECRET: 'cron_secret',
 } as const;
-
-export function resolveCronSecret(
-  storedValue?: string | null,
-  environmentValue?: string | null
-): string {
-  return storedValue?.trim() || environmentValue?.trim() || '';
-}
-
-/** 数据库配置优先，兼容已有的 CRON_SECRET 环境变量。 */
-export async function getCronSecret(): Promise<string> {
-  const storedValue = await getSetting(SettingKeys.CRON_SECRET, '');
-  return resolveCronSecret(storedValue, process.env.CRON_SECRET);
-}
 
 /** 获取采集相关配置的聚合方法 */
 export async function getCollectConfig() {

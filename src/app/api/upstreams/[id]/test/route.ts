@@ -38,7 +38,7 @@ export async function POST(_req: Request, { params }: Params) {
     }));
 
     return NextResponse.json({ ok: true, status: collection.status, results: summary });
-  } catch (e) {
-    return NextResponse.json({ error: '测试失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: '上游测试失败' }, { status: 500 });
   }
 }

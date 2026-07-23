@@ -4,6 +4,7 @@
  * 新增上游类型只需实现此接口，无需改动采集器和 UI
  */
 import type { UpstreamType } from '@prisma/client';
+import { fetchCredentialed, OutboundRequestError } from '../outbound';
 
 /** 适配器运行所需的上下文 */
 export interface AdapterContext {
@@ -122,11 +123,7 @@ export async function fetchWithTimeout(
   init: RequestInit,
   timeoutMs: number
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+  const result = await fetchCredentialed(url, init, timeoutMs);
+  if (!result.ok) throw new OutboundRequestError(result.error.category, result.error.message);
+  return result.response;
 }

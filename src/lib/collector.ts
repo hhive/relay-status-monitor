@@ -9,6 +9,8 @@ import type { AdapterContext } from './adapters/base';
 import { tryDecrypt } from './crypto';
 import { getCollectConfig } from './settings';
 import { evaluateAlerts } from './alerts/engine';
+import { safeStoredError } from './safe-error';
+import { validateUpstreamBaseUrl } from './outbound';
 
 export type CollectMode = 'light' | 'heavy';
 
@@ -25,6 +27,16 @@ export interface UpstreamCollectionDependencies<TKey, TResult = unknown> {
  */
 export async function collectOneKey(key: UpstreamKeyWithUpstream, mode: CollectMode) {
   const { upstream } = key;
+
+  try {
+    validateUpstreamBaseUrl(upstream.type, upstream.baseUrl);
+  } catch (error) {
+    await prisma.upstreamKey.update({
+      where: { id: key.id },
+      data: { lastError: safeStoredError(error), status: 'UNKNOWN' },
+    });
+    return null;
+  }
 
   // 凭证解密
   const apiKey = key.apiKeyEnc ? tryDecrypt(key.apiKeyEnc) : null;
@@ -66,10 +78,10 @@ export async function collectOneKey(key: UpstreamKeyWithUpstream, mode: CollectM
     ]);
   }
 
-  if (!balanceRes.ok) errors.push(`余额: ${balanceRes.errorMessage}`);
-  if (!latencyRes.ok) errors.push(`延迟: ${latencyRes.errorMessage}`);
-  if (modelRes && !modelRes.ok) errors.push(`模型: ${modelRes.errorMessage}`);
-  if (streamRes && !streamRes.ok) errors.push(`流式: ${streamRes.errorMessage}`);
+  if (!balanceRes.ok) errors.push(`balance:${safeStoredError(balanceRes.errorMessage)}`);
+  if (!latencyRes.ok) errors.push(`latency:${safeStoredError(latencyRes.errorMessage)}`);
+  if (modelRes && !modelRes.ok) errors.push(`model:${safeStoredError(modelRes.errorMessage)}`);
+  if (streamRes && !streamRes.ok) errors.push(`stream:${safeStoredError(streamRes.errorMessage)}`);
 
   const success = balanceRes.ok || latencyRes.ok;
   const errorMessage = errors.length > 0 ? errors.join('; ') : null;

@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { runCollectCycle } from '@/lib/collector';
-import { getCronSecret } from '@/lib/settings';
 
 /**
  * 定时采集入口
@@ -13,7 +12,7 @@ export async function GET(request: Request) {
   const start = Date.now();
   try {
     const authHeader = request.headers.get('authorization');
-    const cronSecret = await getCronSecret();
+    const cronSecret = process.env.CRON_SECRET?.trim();
     if (!cronSecret) {
       return NextResponse.json({ error: 'CRON_SECRET 未配置' }, { status: 500 });
     }
@@ -30,9 +29,9 @@ export async function GET(request: Request) {
       elapsedMs: elapsed,
       time: new Date().toISOString(),
     });
-  } catch (e) {
+  } catch {
     return NextResponse.json(
-      { ok: false, error: (e as Error).message },
+      { ok: false, error: '采集任务执行失败' },
       { status: 500 }
     );
   }

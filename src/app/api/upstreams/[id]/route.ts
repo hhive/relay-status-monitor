@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { parseStrictPositiveInteger } from '@/lib/security';
 import { requireApiSession } from '@/lib/auth';
+import { validateUpstreamBaseUrl } from '@/lib/outbound';
+import type { UpstreamType } from '@prisma/client';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -42,21 +44,39 @@ export async function PUT(request: Request, { params }: Params) {
   const auth = await requireApiSession();
   if (!auth.ok) return auth.response;
   try {
+    const existing = await prisma.upstream.findUnique({ where: { id: numericId } });
+    if (!existing) {
+      return NextResponse.json({ error: '上游不存在' }, { status: 404 });
+    }
     const body = await request.json();
     const { name, baseUrl, type, testModel, enabled, priority } = body;
 
+    const upstreamType: UpstreamType = type === undefined ? existing.type : type;
+    if (upstreamType !== 'SUB2API' && upstreamType !== 'NEW_API') {
+      return NextResponse.json({ error: '上游类型无效' }, { status: 400 });
+    }
+    let validatedUrl: URL;
+    try {
+      validatedUrl = validateUpstreamBaseUrl(
+        upstreamType,
+        baseUrl === undefined ? existing.baseUrl : String(baseUrl),
+      );
+    } catch {
+      return NextResponse.json({ error: '上游地址不受支持' }, { status: 400 });
+    }
+
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
-    if (baseUrl !== undefined) data.baseUrl = String(baseUrl).trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    if (type !== undefined) data.type = type;
+    data.baseUrl = validatedUrl.origin;
+    data.type = upstreamType;
     if (testModel !== undefined) data.testModel = testModel || null;
     if (enabled !== undefined) data.enabled = enabled;
     if (priority !== undefined) data.priority = priority;
 
     const upstream = await prisma.upstream.update({ where: { id: numericId }, data });
     return NextResponse.json(upstream);
-  } catch (e) {
-    return NextResponse.json({ error: '更新失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: '更新上游失败' }, { status: 500 });
   }
 }
 
@@ -72,7 +92,7 @@ export async function DELETE(_req: Request, { params }: Params) {
   try {
     await prisma.upstream.delete({ where: { id: numericId } });
     return NextResponse.json({ ok: true });
-  } catch (e) {
-    return NextResponse.json({ error: '删除失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: '删除上游失败' }, { status: 500 });
   }
 }

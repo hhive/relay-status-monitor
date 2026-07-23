@@ -45,14 +45,14 @@ export async function PUT(request: Request, { params }: Params) {
         const refreshed = await refreshKeyMetadata(key.id);
         responseKey = refreshed.key;
         metadataRefresh = refreshed.result;
-      } catch (error) {
-        metadataRefresh = { ok: false, errorMessage: (error as Error).message };
+      } catch {
+        metadataRefresh = { ok: false, errorMessage: '元数据刷新失败' };
       }
     }
 
     return NextResponse.json({ ...toSafeUpstreamKey(responseKey), metadataRefresh });
-  } catch (e) {
-    return NextResponse.json({ error: '更新失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: '更新 Key 失败' }, { status: 500 });
   }
 }
 
@@ -76,7 +76,7 @@ export async function DELETE(_req: Request, { params }: Params) {
     }
     await prisma.upstreamKey.delete({ where: { id: numericKeyId } });
     return NextResponse.json({ ok: true });
-  } catch (e) {
-    return NextResponse.json({ error: '删除失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: '删除 Key 失败' }, { status: 500 });
   }
 }

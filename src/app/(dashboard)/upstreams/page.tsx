@@ -222,7 +222,6 @@ function UpstreamFormDialog({ upstream, onClose, onSaved }: {
                 <SelectContent>
                   <SelectGroup>
                     <SelectItem value="SUB2API">SUB2API</SelectItem>
-                    <SelectItem value="NEW_API">NEW_API</SelectItem>
                   </SelectGroup>
                 </SelectContent>
               </Select>

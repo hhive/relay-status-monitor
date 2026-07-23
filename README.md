@@ -1,6 +1,6 @@
 # Relay Status Monitor
 
-一个面向 AI API 中转站的自托管状态监控面板。它可以统一管理多个 SUB2API 与 New API 上游，按 Key/分组采集余额、延迟、可用率和模型测速数据，并通过告警规则与飞书 Webhook 发送异常通知。
+一个面向 AI API 中转站的自托管状态监控面板。当前部署只允许访问本机 `http://127.0.0.1:8080` 的 SUB2API，上游按 Key/分组采集余额、延迟、可用率和模型测速数据，并通过告警规则与飞书 Webhook 发送异常通知。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/yigehaozi/relay-status-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/yigehaozi/relay-status-monitor/actions/workflows/ci.yml)
@@ -38,11 +38,10 @@
 
 ## 主要能力
 
-- 多上游管理：支持 SUB2API 与 New API，可为一个上游配置多个独立 Key/分组。
+- 多 Key 管理：可为受信任的 SUB2API 上游配置多个独立 Key/分组。
 - 指标采集：记录余额、接口延迟、模型测试延迟、首 Token 延迟和流式 TPS。
 - 轻重分层：日常刷新只查询余额和模型列表；重量采集会发送少量模型生成请求。
 - 状态聚合：分别维护 Key 状态和上游汇总状态，支持在线、降级、离线和未知状态。
-- 远端元数据：New API 可同步 Token 名称、分组名称、分组说明和倍率。
 - 告警管理：支持余额、延迟、连续失败和最近一小时可用率规则，并提供冷却与自动恢复。
 - 通知渠道：当前支持飞书自定义机器人 Webhook，可选签名密钥。
 - 响应式界面：桌面端与手机端均可使用，并支持深色/浅色主题。
@@ -53,9 +52,9 @@
 | 类型 | 余额 | 延迟/模型列表 | 模型与流式测速 | 远端 Key 元数据 | 所需凭证 |
 | --- | --- | --- | --- | --- | --- |
 | `SUB2API` | `GET /v1/usage` | `GET /v1/models` | `POST /v1/chat/completions` | 仅使用余额响应中可用的分组字段 | API Key |
-| `NEW_API` | `GET /api/user/self` | `GET /v1/models` | `POST /v1/chat/completions` | Token 搜索、Token 用量和用户分组接口 | API Key；余额和完整元数据还需要 Access Token 与用户 ID |
+| `NEW_API` | 未启用 | 未启用 | 未启用 | 不发起请求 | 不接受新配置 |
 
-不同部署或二次开发版本的接口可能存在差异。添加上游后，请先使用“测试”或“刷新”确认兼容性。重量测试会产生真实模型请求并消耗少量额度。
+SUB2API 地址必须精确为 `http://127.0.0.1:8080`。添加上游后，请先使用“测试”或“刷新”确认兼容性。重量测试会产生真实模型请求并消耗少量额度。
 
 ## 技术栈
 
@@ -111,11 +110,10 @@ openssl rand -base64 48
 | `DATABASE_URL` | 是 | PostgreSQL 连接字符串。生产环境建议使用独立数据库和最小权限账号。 |
 | `APP_ENCRYPTION_KEY` | 是 | 仅用于加密上游凭证；应用运行和 demo seed 均需要，至少 32 字节。 |
 | `SESSION_SECRET` | 是 | 仅用于签发登录会话；至少 32 字节且不得与 `APP_ENCRYPTION_KEY` 相同。 |
-| `CRON_SECRET` | 建议 | 定时采集接口的 Bearer 密钥，也可以登录后在设置页保存。数据库设置优先于环境变量。 |
+| `CRON_SECRET` | 建议 | 定时采集接口的 Bearer 密钥，仅从服务端环境变量读取。设置 API 和数据库不保存该值。 |
 | `NEXT_PUBLIC_APP_NAME` | 否 | 预留的客户端应用名称配置。 |
 | `ADMIN_PASSWORD` | seed 必填 | 基础 seed 为 `admin` 用户设置的密码。缺失或为空时 seed 会拒绝运行。 |
 | `DEMO_ADMIN_PASSWORD` | demo seed 必填 | 演示用户 `demo` 的密码。 |
-| `DEMO_CRON_SECRET` | demo seed 必填 | 演示数据库中保存的定时采集密钥。 |
 
 不要把 `.env`、数据库导出、API Key、Access Token、Webhook 地址或签名密钥提交到版本库。
 
@@ -149,13 +147,12 @@ DATABASE_URL='postgresql://demo_user:strong_password@127.0.0.1:5432/relay_monito
 APP_ENCRYPTION_KEY='replace-with-a-demo-only-encryption-key' \
 SESSION_SECRET='replace-with-a-different-demo-session-key' \
 DEMO_ADMIN_PASSWORD='replace-with-a-demo-password' \
-DEMO_CRON_SECRET='replace-with-a-demo-cron-secret' \
 pnpm db:seed:demo
 ```
 
 演示 seed 会创建 `demo` 用户，以及 12 个虚构上游、20 个分组、1120 条 7 天指标、7 条告警、规则和设置。为完整展示凭证状态，它还会生成 19 个合成 API Key 和 9 个合成 Access Token，并使用本次显式传入的 `APP_ENCRYPTION_KEY` 加密；这些值只以 `sk-demo-*` / `access-demo-*` 形式存在，不连接任何真实服务。再次执行时，只会重建固定的演示上游数据，但会更新同名演示规则、渠道和设置。
 
-演示 seed 不会读取项目根目录的 `.env`，`DATABASE_URL`、`APP_ENCRYPTION_KEY`、`SESSION_SECRET`、`DEMO_ADMIN_PASSWORD` 和 `DEMO_CRON_SECRET` 必须通过当前进程环境显式提供。它只应连接到本地或专用演示数据库，避免把演示设置混入生产环境。登录用户名固定为 `demo`，密码是执行命令时提供的 `DEMO_ADMIN_PASSWORD`。
+演示 seed 不会读取项目根目录的 `.env`，`DATABASE_URL`、`APP_ENCRYPTION_KEY`、`SESSION_SECRET` 和 `DEMO_ADMIN_PASSWORD` 必须通过当前进程环境显式提供。它只应连接到本地或专用演示数据库，避免把演示设置混入生产环境。登录用户名固定为 `demo`，密码是执行命令时提供的 `DEMO_ADMIN_PASSWORD`。演示告警渠道配置会以 AES-256-GCM 密文写入。
 
 > 当前仓库以 `prisma db push` 作为首次部署方式。若在生产环境长期维护 schema，请在自己的发布流程中采用 Prisma Migration，并在迁移前备份数据库。
 
@@ -189,12 +186,7 @@ pnpm exec next dev -p 3100
 
 ### New API
 
-New API 使用两套独立凭证：
-
-- API Key：用于 Token 用量、模型列表和模型测试。
-- Access Token + 用户 ID：用于账户余额、Token 搜索和用户分组配置。
-
-只配置 API Key 时，系统仍可执行模型相关检查，并尽可能读取 Token 名称；余额和完整分组信息可能不可用。创建、编辑或手动刷新 Key 时，系统会尝试同步远端元数据，失败不会清空已经保存的凭证或旧元数据。
+当前部署未配置 NEW_API 目标 allowlist，因此创建、采集、模型查询和元数据查询均 fail-closed，不会向 NEW_API 地址发起请求，也不会把 API Key 放入 URL 查询参数。
 
 ## 定时采集
 
@@ -217,7 +209,7 @@ Authorization: Bearer <CRON_SECRET>
 - 重量模式：在轻量模式基础上执行非流式模型测试和流式 TPS 测试，会消耗少量额度。
 - 重量采集周期由设置页中的“重量采集间隔”决定。
 
-设置页会根据当前访问地址和保存的 `CRON_SECRET` 生成命令。数据库中的 `cron_secret` 优先于环境变量中的 `CRON_SECRET`。
+设置页只显示服务端是否已配置 `CRON_SECRET`，不会读取、编辑或展示该值。部署时请在服务器环境中设置密钥，并在受控的 crontab 配置中引用同一个值。
 
 ## 生产运行
 
@@ -247,7 +239,8 @@ pnpm start
 | `pnpm db:generate` | 生成 Prisma Client |
 | `pnpm db:push` | 将 schema 同步到数据库 |
 | `ADMIN_PASSWORD='...' pnpm db:seed` | 写入基础数据并设置 `admin` 密码 |
-| `DATABASE_URL='...' APP_ENCRYPTION_KEY='...' SESSION_SECRET='...' DEMO_ADMIN_PASSWORD='...' DEMO_CRON_SECRET='...' pnpm db:seed:demo` | 向显式指定的独立数据库写入合成演示数据 |
+| `DATABASE_URL='...' APP_ENCRYPTION_KEY='...' SESSION_SECRET='...' DEMO_ADMIN_PASSWORD='...' pnpm db:seed:demo` | 向显式指定的独立数据库写入合成演示数据 |
+| `pnpm db:migrate:alert-channels` | 将旧版飞书明文配置一次性迁移为版本化密文，可幂等重复执行 |
 | `pnpm db:studio` | 打开 Prisma Studio |
 
 ## 扩展适配器
@@ -279,14 +272,13 @@ pnpm start
 ### 已保存的上游凭证不可用
 
 - 确认当前 `APP_ENCRYPTION_KEY` 与写入凭证时相同。
-- 检查上游地址是否可从服务器访问，以及证书和 DNS 是否正常。
-- New API 余额查询需要同时配置 Access Token 与用户 ID。
+- 确认上游地址精确为 `http://127.0.0.1:8080`，且服务可从本机访问。
 - 使用“刷新”执行轻量检查；使用“测试”执行完整模型检查。
 
 ### CRON 返回 401
 
 - 检查 Authorization Header 是否严格为 `Bearer <secret>`。
-- 若设置页保存过 `CRON_SECRET`，应使用数据库中的值，而不是旧环境变量。
+- 确认运行服务的环境变量中配置了 `CRON_SECRET`；数据库中的旧 `cron_secret` 不会被读取。
 - 避免在代理层移除 `Authorization` Header。
 
 ### 重量采集消耗过多额度
@@ -303,13 +295,13 @@ pnpm start
 
 ## 安全说明
 
-- 上游 API Key 和 Access Token 使用 AES-256-GCM 加密后写入数据库。
+- 上游 API Key、Access Token 和飞书 Webhook 配置使用 AES-256-GCM 加密后写入数据库。
 - `APP_ENCRYPTION_KEY` 只应通过受控环境变量提供，不能与数据库备份存放在同一公开位置。
 - `SESSION_SECRET` 必须与应用加密密钥分离，并只通过受控环境变量提供。
 - 登录密码使用 bcrypt 哈希且最少 14 个字符；会话使用 7 天有效期的 HttpOnly、SameSite Cookie。
 - 前端 API 只返回 `hasApiKey`、`hasAccessToken` 等状态，不返回凭证明文或密文。
 - CRON 接口不依赖登录 Cookie，必须使用独立、高强度的 `CRON_SECRET`。
-- 飞书 Webhook 配置和数据库中的 CRON 密钥属于敏感数据，应限制数据库和管理员账号访问。
+- 飞书 Webhook 配置为 write-only；API 只返回是否已配置，不返回明文、密文或末尾片段。
 - 对外部署前请使用高强度管理员密码，并启用 HTTPS、数据库备份和网络访问控制。
 
 如发现安全问题，请不要在公开 Issue 中粘贴凭证、数据库内容或完整响应。请只提供可复现的脱敏信息。

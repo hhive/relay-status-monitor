@@ -17,7 +17,9 @@ import type {
   StreamTestResult,
   UpstreamAdapter,
 } from './base';
-import { buildBaseUrl, fetchWithTimeout } from './base';
+import { fetchWithTimeout } from './base';
+import { validateUpstreamBaseUrl } from '../outbound';
+import { safeStoredError } from '../safe-error';
 
 export class Sub2ApiAdapter implements UpstreamAdapter {
   readonly type = 'SUB2API' as const;
@@ -32,11 +34,11 @@ export class Sub2ApiAdapter implements UpstreamAdapter {
 
   /** 查询余额：GET /v1/usage */
   async queryBalance(ctx: AdapterContext): Promise<BalanceResult> {
-    const url = `${buildBaseUrl(ctx.baseUrl)}/v1/usage`;
     try {
+      const url = `${validateUpstreamBaseUrl('SUB2API', ctx.baseUrl).origin}/v1/usage`;
       const res = await fetchWithTimeout(url, { headers: this.headers(ctx.apiKey) }, ctx.timeoutMs);
       if (!res.ok) {
-        return { ok: false, errorMessage: `HTTP ${res.status}: ${await safeReadText(res)}` };
+        return { ok: false, errorMessage: `HTTP ${res.status}` };
       }
       const data = await res.json();
 
@@ -67,9 +69,9 @@ export class Sub2ApiAdapter implements UpstreamAdapter {
 
   /** 延迟测试：GET /v1/models */
   async testLatency(ctx: AdapterContext): Promise<LatencyResult> {
-    const url = `${buildBaseUrl(ctx.baseUrl)}/v1/models`;
     const start = Date.now();
     try {
+      const url = `${validateUpstreamBaseUrl('SUB2API', ctx.baseUrl).origin}/v1/models`;
       const res = await fetchWithTimeout(url, { headers: this.headers(ctx.apiKey) }, ctx.timeoutMs);
       const latencyMs = Date.now() - start;
       if (!res.ok) {
@@ -85,8 +87,8 @@ export class Sub2ApiAdapter implements UpstreamAdapter {
 
   /** 拉取可用模型列表：GET /v1/models */
   async listModels(ctx: AdapterContext): Promise<{ ok: boolean; models?: string[]; errorMessage?: string }> {
-    const url = `${buildBaseUrl(ctx.baseUrl)}/v1/models`;
     try {
+      const url = `${validateUpstreamBaseUrl('SUB2API', ctx.baseUrl).origin}/v1/models`;
       const res = await fetchWithTimeout(url, { headers: this.headers(ctx.apiKey) }, ctx.timeoutMs);
       if (!res.ok) {
         return { ok: false, errorMessage: `HTTP ${res.status}` };
@@ -103,9 +105,9 @@ export class Sub2ApiAdapter implements UpstreamAdapter {
 
   /** 模型实测：POST /v1/chat/completions（非流式） */
   async testModel(ctx: AdapterContext, model: string): Promise<ModelTestResult> {
-    const url = `${buildBaseUrl(ctx.baseUrl)}/v1/chat/completions`;
     const start = Date.now();
     try {
+      const url = `${validateUpstreamBaseUrl('SUB2API', ctx.baseUrl).origin}/v1/chat/completions`;
       const res = await fetchWithTimeout(
         url,
         {
@@ -122,7 +124,7 @@ export class Sub2ApiAdapter implements UpstreamAdapter {
       );
       const latencyMs = Date.now() - start;
       if (!res.ok) {
-        return { ok: false, errorMessage: `HTTP ${res.status}: ${await safeReadText(res)}` };
+        return { ok: false, errorMessage: `HTTP ${res.status}` };
       }
       const data = await res.json();
       const content = data.choices?.[0]?.message?.content ?? '';
@@ -134,9 +136,9 @@ export class Sub2ApiAdapter implements UpstreamAdapter {
 
   /** 流式测速：POST /v1/chat/completions（stream=true） */
   async testStream(ctx: AdapterContext, model: string): Promise<StreamTestResult> {
-    const url = `${buildBaseUrl(ctx.baseUrl)}/v1/chat/completions`;
     const start = Date.now();
     try {
+      const url = `${validateUpstreamBaseUrl('SUB2API', ctx.baseUrl).origin}/v1/chat/completions`;
       const res = await fetchWithTimeout(
         url,
         {
@@ -152,7 +154,7 @@ export class Sub2ApiAdapter implements UpstreamAdapter {
         ctx.timeoutMs
       );
       if (!res.ok) {
-        return { ok: false, errorMessage: `HTTP ${res.status}: ${await safeReadText(res)}` };
+        return { ok: false, errorMessage: `HTTP ${res.status}` };
       }
       if (!res.body) {
         return { ok: false, errorMessage: '响应无 body 流' };
@@ -236,17 +238,5 @@ function estimateTokens(text: string): number {
 }
 
 function errMsg(e: unknown): string {
-  if (e instanceof Error) {
-    if (e.name === 'AbortError') return '请求超时';
-    return e.message;
-  }
-  return String(e);
-}
-
-async function safeReadText(res: Response): Promise<string> {
-  try {
-    return (await res.text()).slice(0, 200);
-  } catch {
-    return '';
-  }
+  return safeStoredError(e);
 }

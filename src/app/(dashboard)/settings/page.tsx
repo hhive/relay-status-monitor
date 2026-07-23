@@ -43,7 +43,6 @@ import {
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/page-header';
 import { resolveRuleNumberDraft } from '@/lib/rule-number-draft';
-import { buildCronCommand } from '@/lib/cron-command';
 import { buildSettingsUpdatePayload } from '@/lib/settings-form';
 import { toast } from 'sonner';
 
@@ -62,7 +61,8 @@ interface AlertChannel {
   id: number;
   name: string;
   type: string;
-  config: { webhookUrl?: string; secret?: string };
+  webhookConfigured: boolean;
+  secretConfigured: boolean;
   enabled: boolean;
 }
 
@@ -514,11 +514,9 @@ function ChannelsTab() {
                   <span className="min-w-0 truncate font-medium" title={ch.name}>{ch.name}</span>
                   <Badge variant="secondary" className="shrink-0">{ch.type}</Badge>
                 </div>
-                <div
-                  className="min-w-0 truncate font-mono text-xs text-muted-foreground"
-                  title={ch.config?.webhookUrl || undefined}
-                >
-                  {ch.config?.webhookUrl || '-'}
+                <div className="text-xs text-muted-foreground">
+                  Webhook {ch.webhookConfigured ? '已配置' : '未配置'}
+                  {ch.secretConfigured ? '，签名密钥已配置' : ''}
                 </div>
               </div>
               <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
@@ -545,12 +543,10 @@ function ChannelsTab() {
 
 // ============ 系统配置 ============
 function SystemTab() {
-  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [settings, setSettings] = useState<Record<string, string | boolean>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [cronOrigin, setCronOrigin] = useState('');
-  const [cronSecretDirty, setCronSecretDirty] = useState(false);
 
   useEffect(() => {
     fetch('/api/settings')
@@ -562,20 +558,15 @@ function SystemTab() {
       .catch(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    setCronOrigin(window.location.origin);
-  }, []);
-
   function update(key: string, value: string) {
     setSettings((prev) => ({ ...prev, [key]: value }));
-    if (key === 'cron_secret') setCronSecretDirty(true);
     setSaved(false);
   }
 
   async function handleSave() {
     setSaving(true);
     try {
-      const payload = buildSettingsUpdatePayload(settings, cronSecretDirty);
+      const payload = buildSettingsUpdatePayload(settings);
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -583,7 +574,6 @@ function SystemTab() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || '保存配置失败');
-      setCronSecretDirty(false);
       setSaved(true);
     } catch (error) {
       setSaved(false);
@@ -602,12 +592,7 @@ function SystemTab() {
     );
   }
 
-  const cronSecret = settings.cron_secret ?? '';
-  const cronCommand = !cronOrigin
-    ? '正在获取当前访问地址…'
-    : cronSecret
-      ? buildCronCommand(cronOrigin, cronSecret)
-      : '请先设置 CRON_SECRET';
+  const cronConfigured = settings.cron_secret_configured === true;
 
   return (
     <div className="flex flex-col gap-4">
@@ -634,7 +619,7 @@ function SystemTab() {
                 id="light-interval"
                 type="number"
                 min={1}
-                value={settings.light_interval_minutes != null ? settings.light_interval_minutes : '1'}
+                value={typeof settings.light_interval_minutes === 'string' ? settings.light_interval_minutes : '1'}
                 onChange={(e) => update('light_interval_minutes', e.target.value)}
               />
             </Field>
@@ -647,7 +632,7 @@ function SystemTab() {
                 id="heavy-interval"
                 type="number"
                 min={5}
-                value={settings.heavy_interval_minutes != null ? settings.heavy_interval_minutes : '15'}
+                value={typeof settings.heavy_interval_minutes === 'string' ? settings.heavy_interval_minutes : '15'}
                 onChange={(e) => update('heavy_interval_minutes', e.target.value)}
               />
             </Field>
@@ -657,7 +642,7 @@ function SystemTab() {
             <Field id="test-model" label="默认测速模型">
               <Input
                 id="test-model"
-                value={settings.test_model != null ? settings.test_model : 'gpt-4o-mini'}
+                value={typeof settings.test_model === 'string' ? settings.test_model : 'gpt-4o-mini'}
                 onChange={(e) => update('test_model', e.target.value)}
               />
             </Field>
@@ -665,7 +650,7 @@ function SystemTab() {
               <Input
                 id="test-timeout"
                 type="number"
-                value={settings.test_timeout_ms != null ? settings.test_timeout_ms : '15000'}
+                value={typeof settings.test_timeout_ms === 'string' ? settings.test_timeout_ms : '15000'}
                 onChange={(e) => update('test_timeout_ms', e.target.value)}
               />
             </Field>
@@ -673,28 +658,23 @@ function SystemTab() {
               <Input
                 id="retention-days"
                 type="number"
-                value={settings.retention_days != null ? settings.retention_days : '90'}
+                value={typeof settings.retention_days === 'string' ? settings.retention_days : '90'}
                 onChange={(e) => update('retention_days', e.target.value)}
               />
             </Field>
           </div>
 
-          <Field
-            id="cron-secret"
-            label="CRON_SECRET"
-            hint="定时任务请求采集接口时使用；保存后下方命令会同步更新"
-            className="max-w-xl"
-          >
-            <Input
-              id="cron-secret"
-              type="text"
-              autoComplete="off"
-              className="font-mono"
-              value={cronSecret}
-              onChange={(e) => update('cron_secret', e.target.value)}
-              placeholder="设置定时采集密钥"
-            />
-          </Field>
+          <div className="max-w-xl space-y-1.5">
+            <Label>CRON_SECRET</Label>
+            <div className="flex items-center gap-2 text-sm">
+              {cronConfigured ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+              )}
+              <span>{cronConfigured ? '服务器环境变量已配置' : '服务器环境变量未配置'}</span>
+            </div>
+          </div>
 
           <div className="flex items-center justify-between border-t pt-4">
             <div className="flex items-center gap-2 text-sm">
@@ -717,21 +697,10 @@ function SystemTab() {
         </CardContent>
       </Card>
 
-      {/* cron 部署提示 */}
-      <Card className="border-primary/30 bg-primary/5">
-        <CardContent className="flex flex-col gap-2 p-4">
-          <div className="flex items-center gap-2 text-sm font-medium text-primary">
-            <ShieldCheck className="h-4 w-4" />
-            定时采集部署方式
-          </div>
-          <p className="text-xs text-muted-foreground">
-            在服务器 crontab 中添加以下条目，每分钟触发采集：
-          </p>
-          <pre className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs">
-            {cronCommand}
-          </pre>
-        </CardContent>
-      </Card>
+      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        <ShieldCheck className="h-4 w-4" />
+        定时采集密钥仅由服务器环境变量管理。
+      </p>
     </div>
   );
 }

@@ -4,6 +4,7 @@
 import type { AlertRule, IncidentType, Upstream, UpstreamKey } from '@prisma/client';
 import { prisma } from '../db';
 import { sendNotification } from './channels/feishu';
+import { safeErrorMessage } from '../safe-error';
 
 interface EvalResult {
   rule: AlertRule;
@@ -54,7 +55,7 @@ export async function evaluateAlerts(upstreamKeyId: number): Promise<void> {
     });
 
     void sendNotification(incident, key.upstream, key, false).catch((err) => {
-      console.error(`[告警] 发送通知失败 (incident ${incident.id}):`, err);
+      console.error(`[告警] 发送通知失败 (incident ${incident.id}):`, safeErrorMessage(err));
     });
   }
 

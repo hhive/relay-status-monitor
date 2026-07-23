@@ -11,6 +11,7 @@ import {
   sortAndPaginateByBalance,
 } from '@/lib/upstream-query';
 import { requireApiSession } from '@/lib/auth';
+import { validateUpstreamBaseUrl } from '@/lib/outbound';
 
 /** 分页获取上游（含 keys 列表） */
 export async function GET(request: Request) {
@@ -91,23 +92,29 @@ export async function POST(request: Request) {
     if (!name || !baseUrl) {
       return NextResponse.json({ error: '名称和地址不能为空' }, { status: 400 });
     }
+    const upstreamType: UpstreamType = type === undefined ? 'SUB2API' : type;
+    if (upstreamType !== 'SUB2API' && upstreamType !== 'NEW_API') {
+      return NextResponse.json({ error: '上游类型无效' }, { status: 400 });
+    }
+    let validatedUrl: URL;
+    try {
+      validatedUrl = validateUpstreamBaseUrl(upstreamType, String(baseUrl));
+    } catch {
+      return NextResponse.json({ error: '上游地址不受支持' }, { status: 400 });
+    }
 
     const upstream = await prisma.upstream.create({
       data: {
         name,
-        baseUrl: normalizeUrl(baseUrl),
-        type: (type as UpstreamType) || 'SUB2API',
+        baseUrl: validatedUrl.origin,
+        type: upstreamType,
         testModel: testModel || null,
         enabled: enabled !== false,
         priority: priority ?? 0,
       },
     });
     return NextResponse.json(upstream, { status: 201 });
-  } catch (e) {
-    return NextResponse.json({ error: '创建失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: '创建上游失败' }, { status: 500 });
   }
-}
-
-function normalizeUrl(url: string): string {
-  return url.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
 }

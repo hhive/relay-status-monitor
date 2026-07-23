@@ -73,8 +73,8 @@ export async function POST(request: Request, { params }: Params) {
         const refreshed = await refreshKeyMetadata(key.id);
         responseKey = refreshed.key;
         metadataRefresh = refreshed.result;
-      } catch (error) {
-        metadataRefresh = { ok: false, errorMessage: (error as Error).message };
+      } catch {
+        metadataRefresh = { ok: false, errorMessage: '元数据刷新失败' };
       }
     }
 
@@ -82,7 +82,7 @@ export async function POST(request: Request, { params }: Params) {
       { ...toSafeUpstreamKey(responseKey), metadataRefresh },
       { status: 201 }
     );
-  } catch (e) {
-    return NextResponse.json({ error: '创建失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: '创建 Key 失败' }, { status: 500 });
   }
 }

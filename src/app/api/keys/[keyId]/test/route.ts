@@ -22,7 +22,7 @@ export async function POST(_req: Request, { params }: Params) {
       return NextResponse.json({ error: '采集失败：未配置凭证' }, { status: 400 });
     }
     return NextResponse.json(metric);
-  } catch (e) {
-    return NextResponse.json({ error: '测试失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: 'Key 测试失败' }, { status: 500 });
   }
 }

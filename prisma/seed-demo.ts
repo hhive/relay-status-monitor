@@ -2,10 +2,10 @@
  * 独立演示种子：生成虚构上游、密钥、7 天指标、告警和设置。
  * 用法：
  * DATABASE_URL='<demo-database>' APP_ENCRYPTION_KEY='<demo-key>' \
- * SESSION_SECRET='<demo-session-key>' DEMO_ADMIN_PASSWORD='<strong-password>' \
- * DEMO_CRON_SECRET='<random-secret>' pnpm db:seed:demo
+ * SESSION_SECRET='<demo-session-key>' DEMO_ADMIN_PASSWORD='<strong-password>' pnpm db:seed:demo
  */
 import bcrypt from 'bcryptjs';
+import type { Prisma } from '@prisma/client';
 import { buildDemoDataset, readDemoSeedEnvironment } from '../src/lib/demo-data';
 import { assertPasswordPolicy } from '../src/lib/login-policy';
 
@@ -13,9 +13,10 @@ async function main() {
   // Read the process environment before importing Prisma so project .env files
   // cannot silently choose the target database for demo seeding.
   const seedEnvironment = readDemoSeedEnvironment(process.env);
-  const [{ PrismaClient }, { encrypt }] = await Promise.all([
+  const [{ PrismaClient }, { encrypt }, { sealAlertChannelConfig }] = await Promise.all([
     import('@prisma/client'),
     import('../src/lib/crypto'),
+    import('../src/lib/alert-channel-config'),
   ]);
   process.env.APP_ENCRYPTION_KEY = seedEnvironment.appEncryptionKey;
   process.env.SESSION_SECRET = seedEnvironment.sessionSecret;
@@ -25,9 +26,7 @@ async function main() {
   });
   assertPasswordPolicy(seedEnvironment.demoAdminPassword, 'DEMO_ADMIN_PASSWORD');
   const passwordHash = await bcrypt.hash(seedEnvironment.demoAdminPassword, 10);
-  const dataset = buildDemoDataset(new Date(), {
-    cronSecret: seedEnvironment.demoCronSecret,
-  });
+  const dataset = buildDemoDataset(new Date());
 
   try {
     await prisma.$transaction(
@@ -52,10 +51,14 @@ async function main() {
       }
 
       for (const channel of dataset.alertChannels) {
+        const data = {
+          ...channel,
+          config: sealAlertChannelConfig(channel.config) as unknown as Prisma.InputJsonValue,
+        };
         await tx.alertChannel.upsert({
           where: { name: channel.name },
-          update: channel,
-          create: channel,
+          update: data,
+          create: data,
         });
       }
 

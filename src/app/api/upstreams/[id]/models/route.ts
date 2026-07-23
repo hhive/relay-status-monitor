@@ -6,6 +6,7 @@ import { getCollectConfig } from '@/lib/settings';
 import type { AdapterContext } from '@/lib/adapters/base';
 import { parseStrictPositiveInteger } from '@/lib/security';
 import { requireApiSession } from '@/lib/auth';
+import { validateUpstreamBaseUrl } from '@/lib/outbound';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -31,6 +32,11 @@ export async function GET(request: Request, { params }: Params) {
   const upstream = await prisma.upstream.findUnique({ where: { id: upstreamId } });
   if (!upstream) {
     return NextResponse.json({ error: '上游不存在' }, { status: 404 });
+  }
+  try {
+    validateUpstreamBaseUrl(upstream.type, upstream.baseUrl);
+  } catch {
+    return NextResponse.json({ error: '上游地址不受支持' }, { status: 400 });
   }
 
   // 取指定 key 或第一个有 apiKey 的 enabled key
