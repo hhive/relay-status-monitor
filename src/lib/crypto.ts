@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import { resolveApplicationSecrets } from '@/lib/auth-config';
 
 /**
  * AES-256-GCM 加密工具
@@ -16,11 +17,7 @@ function deriveKey(secret: string, salt: Buffer): Buffer {
 }
 
 function getSecret(): string {
-  const secret = process.env.APP_ENCRYPTION_KEY;
-  if (!secret || secret.length < 16) {
-    throw new Error('APP_ENCRYPTION_KEY 未配置或过短（至少 16 字符）');
-  }
-  return secret;
+  return resolveApplicationSecrets().encryptionSecret;
 }
 
 /**

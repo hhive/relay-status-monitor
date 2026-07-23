@@ -89,11 +89,12 @@ pnpm install
 cp .env.example .env
 ```
 
-至少设置数据库与应用加密密钥：
+至少设置数据库、应用加密密钥与独立会话密钥：
 
 ```dotenv
 DATABASE_URL="postgresql://monitor_user:strong_password@127.0.0.1:5432/relay_monitor?schema=public"
 APP_ENCRYPTION_KEY="replace-with-a-long-random-secret"
+SESSION_SECRET="replace-with-a-different-long-random-secret"
 CRON_SECRET="replace-with-an-independent-random-secret"
 ```
 
@@ -108,7 +109,8 @@ openssl rand -base64 48
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
 | `DATABASE_URL` | 是 | PostgreSQL 连接字符串。生产环境建议使用独立数据库和最小权限账号。 |
-| `APP_ENCRYPTION_KEY` | 是 | 用于加密上游凭证并签发登录会话；应用运行和 demo seed 均需要，建议至少 32 字节随机值。 |
+| `APP_ENCRYPTION_KEY` | 是 | 仅用于加密上游凭证；应用运行和 demo seed 均需要，至少 32 字节。 |
+| `SESSION_SECRET` | 是 | 仅用于签发登录会话；至少 32 字节且不得与 `APP_ENCRYPTION_KEY` 相同。 |
 | `CRON_SECRET` | 建议 | 定时采集接口的 Bearer 密钥，也可以登录后在设置页保存。数据库设置优先于环境变量。 |
 | `NEXT_PUBLIC_APP_NAME` | 否 | 预留的客户端应用名称配置。 |
 | `ADMIN_PASSWORD` | seed 必填 | 基础 seed 为 `admin` 用户设置的密码。缺失或为空时 seed 会拒绝运行。 |
@@ -145,6 +147,7 @@ ADMIN_PASSWORD='replace-with-a-strong-password' pnpm db:seed
 ```bash
 DATABASE_URL='postgresql://demo_user:strong_password@127.0.0.1:5432/relay_monitor_demo?schema=public' \
 APP_ENCRYPTION_KEY='replace-with-a-demo-only-encryption-key' \
+SESSION_SECRET='replace-with-a-different-demo-session-key' \
 DEMO_ADMIN_PASSWORD='replace-with-a-demo-password' \
 DEMO_CRON_SECRET='replace-with-a-demo-cron-secret' \
 pnpm db:seed:demo
@@ -152,7 +155,7 @@ pnpm db:seed:demo
 
 演示 seed 会创建 `demo` 用户，以及 12 个虚构上游、20 个分组、1120 条 7 天指标、7 条告警、规则和设置。为完整展示凭证状态，它还会生成 19 个合成 API Key 和 9 个合成 Access Token，并使用本次显式传入的 `APP_ENCRYPTION_KEY` 加密；这些值只以 `sk-demo-*` / `access-demo-*` 形式存在，不连接任何真实服务。再次执行时，只会重建固定的演示上游数据，但会更新同名演示规则、渠道和设置。
 
-演示 seed 不会读取项目根目录的 `.env`，`DATABASE_URL`、`APP_ENCRYPTION_KEY`、`DEMO_ADMIN_PASSWORD` 和 `DEMO_CRON_SECRET` 必须通过当前进程环境显式提供。它只应连接到本地或专用演示数据库，避免把演示设置混入生产环境。登录用户名固定为 `demo`，密码是执行命令时提供的 `DEMO_ADMIN_PASSWORD`。
+演示 seed 不会读取项目根目录的 `.env`，`DATABASE_URL`、`APP_ENCRYPTION_KEY`、`SESSION_SECRET`、`DEMO_ADMIN_PASSWORD` 和 `DEMO_CRON_SECRET` 必须通过当前进程环境显式提供。它只应连接到本地或专用演示数据库，避免把演示设置混入生产环境。登录用户名固定为 `demo`，密码是执行命令时提供的 `DEMO_ADMIN_PASSWORD`。
 
 > 当前仓库以 `prisma db push` 作为首次部署方式。若在生产环境长期维护 schema，请在自己的发布流程中采用 Prisma Migration，并在迁移前备份数据库。
 
@@ -230,7 +233,8 @@ pnpm start
 - 为 PostgreSQL 配置定期加密备份。
 - 将 `.env` 交给部署平台的 Secret 管理能力，不写入镜像或仓库。
 - 为外部 cron 设置超时、失败日志和重试策略，避免无界并发。
-- 修改 `APP_ENCRYPTION_KEY` 前先规划凭证迁移；直接更换会导致现有加密凭证无法解密，并使已有会话失效。
+- 修改 `APP_ENCRYPTION_KEY` 前先规划凭证迁移；直接更换会导致现有加密凭证无法解密。
+- 更换 `SESSION_SECRET` 会使所有已有会话失效。
 
 ## 常用命令
 
@@ -243,7 +247,7 @@ pnpm start
 | `pnpm db:generate` | 生成 Prisma Client |
 | `pnpm db:push` | 将 schema 同步到数据库 |
 | `ADMIN_PASSWORD='...' pnpm db:seed` | 写入基础数据并设置 `admin` 密码 |
-| `DATABASE_URL='...' APP_ENCRYPTION_KEY='...' DEMO_ADMIN_PASSWORD='...' DEMO_CRON_SECRET='...' pnpm db:seed:demo` | 向显式指定的独立数据库写入合成演示数据 |
+| `DATABASE_URL='...' APP_ENCRYPTION_KEY='...' SESSION_SECRET='...' DEMO_ADMIN_PASSWORD='...' DEMO_CRON_SECRET='...' pnpm db:seed:demo` | 向显式指定的独立数据库写入合成演示数据 |
 | `pnpm db:studio` | 打开 Prisma Studio |
 
 ## 扩展适配器
@@ -268,9 +272,9 @@ pnpm start
 
 ### 登录后立即返回登录页
 
-- 确认 `APP_ENCRYPTION_KEY` 已配置且所有应用实例一致。
+- 确认 `SESSION_SECRET` 已配置且所有应用实例一致，并与 `APP_ENCRYPTION_KEY` 不同。
 - 生产环境必须通过 HTTPS 访问，否则安全 Cookie 可能无法正常保存。
-- 更换 `APP_ENCRYPTION_KEY` 后，旧会话会自然失效，需要重新登录。
+- 更换 `SESSION_SECRET` 或修改密码后，旧会话会失效，需要重新登录。
 
 ### 已保存的上游凭证不可用
 
@@ -301,7 +305,8 @@ pnpm start
 
 - 上游 API Key 和 Access Token 使用 AES-256-GCM 加密后写入数据库。
 - `APP_ENCRYPTION_KEY` 只应通过受控环境变量提供，不能与数据库备份存放在同一公开位置。
-- 登录密码使用 bcrypt 哈希；会话使用 7 天有效期的 HttpOnly、SameSite Cookie。
+- `SESSION_SECRET` 必须与应用加密密钥分离，并只通过受控环境变量提供。
+- 登录密码使用 bcrypt 哈希且最少 14 个字符；会话使用 7 天有效期的 HttpOnly、SameSite Cookie。
 - 前端 API 只返回 `hasApiKey`、`hasAccessToken` 等状态，不返回凭证明文或密文。
 - CRON 接口不依赖登录 Cookie，必须使用独立、高强度的 `CRON_SECRET`。
 - 飞书 Webhook 配置和数据库中的 CRON 密钥属于敏感数据，应限制数据库和管理员账号访问。

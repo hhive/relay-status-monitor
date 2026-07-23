@@ -2,10 +2,12 @@
  * 独立演示种子：生成虚构上游、密钥、7 天指标、告警和设置。
  * 用法：
  * DATABASE_URL='<demo-database>' APP_ENCRYPTION_KEY='<demo-key>' \
- * DEMO_ADMIN_PASSWORD='<strong-password>' DEMO_CRON_SECRET='<random-secret>' pnpm db:seed:demo
+ * SESSION_SECRET='<demo-session-key>' DEMO_ADMIN_PASSWORD='<strong-password>' \
+ * DEMO_CRON_SECRET='<random-secret>' pnpm db:seed:demo
  */
 import bcrypt from 'bcryptjs';
 import { buildDemoDataset, readDemoSeedEnvironment } from '../src/lib/demo-data';
+import { assertPasswordPolicy } from '../src/lib/login-policy';
 
 async function main() {
   // Read the process environment before importing Prisma so project .env files
@@ -16,10 +18,12 @@ async function main() {
     import('../src/lib/crypto'),
   ]);
   process.env.APP_ENCRYPTION_KEY = seedEnvironment.appEncryptionKey;
+  process.env.SESSION_SECRET = seedEnvironment.sessionSecret;
 
   const prisma = new PrismaClient({
     datasources: { db: { url: seedEnvironment.databaseUrl } },
   });
+  assertPasswordPolicy(seedEnvironment.demoAdminPassword, 'DEMO_ADMIN_PASSWORD');
   const passwordHash = await bcrypt.hash(seedEnvironment.demoAdminPassword, 10);
   const dataset = buildDemoDataset(new Date(), {
     cronSecret: seedEnvironment.demoCronSecret,
@@ -30,7 +34,12 @@ async function main() {
       async (tx) => {
       await tx.user.upsert({
         where: { username: 'demo' },
-        update: { password: passwordHash },
+        update: {
+          password: passwordHash,
+          sessionVersion: { increment: 1 },
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        },
         create: { username: 'demo', password: passwordHash },
       });
 

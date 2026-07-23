@@ -102,6 +102,7 @@ export interface DemoDatasetOptions {
 export interface DemoSeedEnvironment {
   databaseUrl: string;
   appEncryptionKey: string;
+  sessionSecret: string;
   demoAdminPassword: string;
   demoCronSecret: string;
 }
@@ -121,6 +122,7 @@ export function readDemoSeedEnvironment(
   return {
     databaseUrl: requireSeedValue(environment, 'DATABASE_URL'),
     appEncryptionKey: requireSeedValue(environment, 'APP_ENCRYPTION_KEY'),
+    sessionSecret: requireSeedValue(environment, 'SESSION_SECRET'),
     demoAdminPassword: requireSeedValue(environment, 'DEMO_ADMIN_PASSWORD'),
     demoCronSecret: requireSeedValue(environment, 'DEMO_CRON_SECRET'),
   };

@@ -4,6 +4,8 @@ import { getAdapter } from '@/lib/adapters/registry';
 import { tryDecrypt } from '@/lib/crypto';
 import { getCollectConfig } from '@/lib/settings';
 import type { AdapterContext } from '@/lib/adapters/base';
+import { parseStrictPositiveInteger } from '@/lib/security';
+import { requireApiSession } from '@/lib/auth';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -16,25 +18,37 @@ interface Params {
  */
 export async function GET(request: Request, { params }: Params) {
   const { id } = await params;
+  const upstreamId = parseStrictPositiveInteger(id);
   const { searchParams } = new URL(request.url);
   const keyId = searchParams.get('keyId');
+  const numericKeyId = keyId === null ? null : parseStrictPositiveInteger(keyId);
+  if (upstreamId === null || (keyId !== null && numericKeyId === null)) {
+    return NextResponse.json({ error: '上游 ID 或 Key ID 无效' }, { status: 400 });
+  }
+  const auth = await requireApiSession();
+  if (!auth.ok) return auth.response;
 
-  const upstream = await prisma.upstream.findUnique({ where: { id: Number(id) } });
+  const upstream = await prisma.upstream.findUnique({ where: { id: upstreamId } });
   if (!upstream) {
     return NextResponse.json({ error: '上游不存在' }, { status: 404 });
   }
 
   // 取指定 key 或第一个有 apiKey 的 enabled key
   let key;
-  if (keyId) {
-    key = await prisma.upstreamKey.findUnique({ where: { id: Number(keyId) } });
+  if (numericKeyId !== null) {
+    key = await prisma.upstreamKey.findFirst({
+      where: { id: numericKeyId, upstreamId },
+    });
   } else {
     key = await prisma.upstreamKey.findFirst({
-      where: { upstreamId: Number(id), enabled: true, apiKeyEnc: { not: null } },
+      where: { upstreamId, enabled: true, apiKeyEnc: { not: null } },
     });
   }
 
-  if (!key || !key.apiKeyEnc) {
+  if (numericKeyId !== null && !key) {
+    return NextResponse.json({ error: 'Key 不存在' }, { status: 404 });
+  }
+  if (!key?.apiKeyEnc) {
     return NextResponse.json({ error: '未找到带 API Key 的分组' }, { status: 400 });
   }
 

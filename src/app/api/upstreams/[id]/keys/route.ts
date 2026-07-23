@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db';
 import { encrypt } from '@/lib/crypto';
 import { refreshKeyMetadata } from '@/lib/key-metadata-service';
 import { toSafeUpstreamKey } from '@/lib/key-metadata';
+import { parseStrictPositiveInteger } from '@/lib/security';
+import { requireApiSession } from '@/lib/auth';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -11,8 +13,14 @@ interface Params {
 /** 列出某上游下所有 keys */
 export async function GET(_req: Request, { params }: Params) {
   const { id } = await params;
+  const upstreamId = parseStrictPositiveInteger(id);
+  if (upstreamId === null) {
+    return NextResponse.json({ error: '上游 ID 无效' }, { status: 400 });
+  }
+  const auth = await requireApiSession();
+  if (!auth.ok) return auth.response;
   const keys = await prisma.upstreamKey.findMany({
-    where: { upstreamId: Number(id) },
+    where: { upstreamId },
     orderBy: { id: 'asc' },
   });
   // 不返回加密原文
@@ -23,11 +31,13 @@ export async function GET(_req: Request, { params }: Params) {
 /** 新增 key */
 export async function POST(request: Request, { params }: Params) {
   const { id } = await params;
+  const upstreamId = parseStrictPositiveInteger(id);
+  if (upstreamId === null) {
+    return NextResponse.json({ error: '上游 ID 无效' }, { status: 400 });
+  }
+  const auth = await requireApiSession();
+  if (!auth.ok) return auth.response;
   try {
-    const upstreamId = Number(id);
-    if (!Number.isInteger(upstreamId)) {
-      return NextResponse.json({ error: '上游 ID 无效' }, { status: 400 });
-    }
     const upstream = await prisma.upstream.findUnique({
       where: { id: upstreamId },
       select: { type: true },

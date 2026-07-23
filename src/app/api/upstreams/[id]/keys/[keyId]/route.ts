@@ -4,6 +4,8 @@ import { encrypt } from '@/lib/crypto';
 import { buildKeyUpdateData } from '@/lib/key-input';
 import { refreshKeyMetadata } from '@/lib/key-metadata-service';
 import { toSafeUpstreamKey } from '@/lib/key-metadata';
+import { parseStrictPositiveInteger } from '@/lib/security';
+import { requireApiSession } from '@/lib/auth';
 
 interface Params {
   params: Promise<{ id: string; keyId: string }>;
@@ -12,9 +14,14 @@ interface Params {
 /** 更新 key */
 export async function PUT(request: Request, { params }: Params) {
   const { id, keyId } = await params;
+  const upstreamId = parseStrictPositiveInteger(id);
+  const numericKeyId = parseStrictPositiveInteger(keyId);
+  if (upstreamId === null || numericKeyId === null) {
+    return NextResponse.json({ error: '上游 ID 或 Key ID 无效' }, { status: 400 });
+  }
+  const auth = await requireApiSession();
+  if (!auth.ok) return auth.response;
   try {
-    const upstreamId = Number(id);
-    const numericKeyId = Number(keyId);
     const existing = await prisma.upstreamKey.findFirst({
       where: { id: numericKeyId, upstreamId },
       include: { upstream: true },
@@ -52,10 +59,16 @@ export async function PUT(request: Request, { params }: Params) {
 /** 删除 key */
 export async function DELETE(_req: Request, { params }: Params) {
   const { id, keyId } = await params;
+  const upstreamId = parseStrictPositiveInteger(id);
+  const numericKeyId = parseStrictPositiveInteger(keyId);
+  if (upstreamId === null || numericKeyId === null) {
+    return NextResponse.json({ error: '上游 ID 或 Key ID 无效' }, { status: 400 });
+  }
+  const auth = await requireApiSession();
+  if (!auth.ok) return auth.response;
   try {
-    const numericKeyId = Number(keyId);
     const existing = await prisma.upstreamKey.findFirst({
-      where: { id: numericKeyId, upstreamId: Number(id) },
+      where: { id: numericKeyId, upstreamId },
       select: { id: true },
     });
     if (!existing) {

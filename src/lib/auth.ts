@@ -1,6 +1,14 @@
-import { SignJWT, jwtVerify } from 'jose';
 import bcrypt from 'bcryptjs';
 import { cookies } from 'next/headers';
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
+import {
+  SESSION_MAX_AGE,
+  sessionMatchesUser,
+  signSessionToken,
+  verifySessionToken,
+  type SessionPayload,
+} from '@/lib/session-token';
 
 /**
  * 会话与认证工具
@@ -8,26 +16,11 @@ import { cookies } from 'next/headers';
  */
 
 const COOKIE_NAME = 'rsm_session';
-const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 天（秒）
-
-function getSecret(): Uint8Array {
-  const secret = process.env.APP_ENCRYPTION_KEY;
-  if (!secret) throw new Error('APP_ENCRYPTION_KEY 未配置');
-  return new TextEncoder().encode(secret);
-}
-
-export interface SessionPayload {
-  userId: number;
-  username: string;
-}
+export type { SessionPayload } from '@/lib/session-token';
 
 /** 签发 JWT 并写入 cookie */
 export async function createSession(user: SessionPayload): Promise<void> {
-  const token = await new SignJWT({ ...user })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime(`${SESSION_MAX_AGE}s`)
-    .sign(getSecret());
+  const token = await signSessionToken(user);
 
   const store = await cookies();
   store.set(COOKIE_NAME, token, {
@@ -45,11 +38,30 @@ export async function getSession(): Promise<SessionPayload | null> {
     const store = await cookies();
     const token = store.get(COOKIE_NAME)?.value;
     if (!token) return null;
-    const { payload } = await jwtVerify(token, getSecret());
-    return payload as unknown as SessionPayload;
+    const payload = await verifySessionToken(token);
+    if (!payload) return null;
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: { id: true, username: true, sessionVersion: true },
+    });
+    return sessionMatchesUser(payload, user) ? payload : null;
   } catch {
     return null;
   }
+}
+
+export async function requireApiSession(): Promise<
+  | { ok: true; session: SessionPayload }
+  | { ok: false; response: NextResponse }
+> {
+  const session = await getSession();
+  if (!session) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: '未登录' }, { status: 401 }),
+    };
+  }
+  return { ok: true, session };
 }
 
 /** 注销：删除 cookie */

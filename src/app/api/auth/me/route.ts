@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
+import { requireApiSession } from '@/lib/auth';
 
 /** 获取当前登录用户 */
 export async function GET() {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ ok: false }, { status: 401 });
-  }
+  const auth = await requireApiSession();
+  if (!auth.ok) return auth.response;
+  const session = auth.session;
   return NextResponse.json({ ok: true, username: session.username, userId: session.userId });
 }

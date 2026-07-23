@@ -1,32 +1,35 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { jwtVerify } from 'jose';
+import { safeRedirectPath } from '@/lib/security';
+import { verifySessionToken } from '@/lib/session-token';
 
 /**
  * 路由守卫中间件
  * 保护 /（dashboard）路由，未登录跳转 /login
- * /login、/api/auth/*、/api/cron/* 放行
+ * 仅登录、注销、采集入口和 Next.js 框架资源公开
  */
 
 const COOKIE_NAME = 'rsm_session';
-// 放行的路径前缀
-const PUBLIC_PATHS = ['/login', '/api/auth', '/api/cron'];
-
-function getSecret(): Uint8Array {
-  const secret = process.env.APP_ENCRYPTION_KEY;
-  if (!secret) throw new Error('APP_ENCRYPTION_KEY 未配置');
-  return new TextEncoder().encode(secret);
-}
+const PUBLIC_PATHS = new Set([
+  '/login',
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/cron/collect',
+]);
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // 公开路径放行
-  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+  if (PUBLIC_PATHS.has(pathname)) {
     return NextResponse.next();
   }
 
   // 静态资源放行
-  if (pathname.startsWith('/_next') || pathname.includes('.')) {
+  if (
+    pathname.startsWith('/_next/static/') ||
+    pathname === '/_next/image' ||
+    pathname === '/favicon.ico'
+  ) {
     return NextResponse.next();
   }
 
@@ -37,7 +40,8 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    await jwtVerify(token, getSecret());
+    const session = await verifySessionToken(token);
+    if (!session) return redirectToLogin(request);
     return NextResponse.next();
   } catch {
     return redirectToLogin(request);
@@ -51,7 +55,10 @@ function redirectToLogin(request: NextRequest) {
   }
   const loginUrl = request.nextUrl.clone();
   loginUrl.pathname = '/login';
-  loginUrl.searchParams.set('redirect', request.nextUrl.pathname);
+  loginUrl.searchParams.set(
+    'redirect',
+    safeRedirectPath(request.nextUrl.pathname + request.nextUrl.search),
+  );
   return NextResponse.redirect(loginUrl);
 }
 

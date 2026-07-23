@@ -10,9 +10,12 @@ import {
   parseUpstreamQueryParams,
   sortAndPaginateByBalance,
 } from '@/lib/upstream-query';
+import { requireApiSession } from '@/lib/auth';
 
 /** 分页获取上游（含 keys 列表） */
 export async function GET(request: Request) {
+  const auth = await requireApiSession();
+  if (!auth.ok) return auth.response;
   const searchParams = new URL(request.url).searchParams;
   const { page, pageSize } = parsePaginationParams(searchParams);
   const query = parseUpstreamQueryParams(searchParams);
@@ -79,6 +82,8 @@ export async function GET(request: Request) {
 
 /** 新建上游（不含凭证，凭证通过 keys 端点添加） */
 export async function POST(request: Request) {
+  const auth = await requireApiSession();
+  if (!auth.ok) return auth.response;
   try {
     const body = await request.json();
     const { name, baseUrl, type, testModel, enabled, priority } = body;

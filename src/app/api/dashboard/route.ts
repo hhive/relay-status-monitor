@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { requireApiSession } from '@/lib/auth';
 
 /**
  * Dashboard 概览数据
  * 统计从 keys 聚合，列表按 key（分组）粒度展开
  */
 export async function GET() {
+  const auth = await requireApiSession();
+  if (!auth.ok) return auth.response;
   const upstreams = await prisma.upstream.findMany({
     orderBy: [{ priority: 'desc' }, { id: 'asc' }],
     include: {

@@ -5,6 +5,7 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { requireSeedValue } from '../src/lib/demo-data';
+import { assertPasswordPolicy } from '../src/lib/login-policy';
 
 const prisma = new PrismaClient();
 
@@ -27,11 +28,17 @@ const defaultSettings: Record<string, string> = {
 
 async function main() {
   const adminPassword = requireSeedValue(process.env, 'ADMIN_PASSWORD');
+  assertPasswordPolicy(adminPassword, 'ADMIN_PASSWORD');
   const adminPasswordHash = await bcrypt.hash(adminPassword, 10);
 
   await prisma.user.upsert({
     where: { username: 'admin' },
-    update: { password: adminPasswordHash },
+    update: {
+      password: adminPasswordHash,
+      sessionVersion: { increment: 1 },
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+    },
     create: { username: 'admin', password: adminPasswordHash },
   });
   console.log('默认管理员已就绪（密码来自 ADMIN_PASSWORD）');
