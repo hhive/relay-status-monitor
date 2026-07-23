@@ -75,3 +75,8 @@ export function toSafeAlertChannel<T extends { config: unknown }>(channel: T) {
   }
   return { ...safeFields, webhookConfigured, secretConfigured };
 }
+
+export function assertAlertChannelMigrationSucceeded(failedIds: readonly number[]): void {
+  if (failedIds.length === 0) return;
+  throw new Error(`迁移失败 ${failedIds.length} 个，ID：${failedIds.join(', ')}`);
+}

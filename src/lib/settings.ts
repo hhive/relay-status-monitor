@@ -50,6 +50,18 @@ export const SettingKeys = {
   TIMEZONE: 'timezone',
 } as const;
 
+export type EditableSettingKey = typeof SettingKeys[keyof typeof SettingKeys];
+
+export const EDITABLE_SETTING_KEYS: readonly EditableSettingKey[] = Object.freeze(
+  Object.values(SettingKeys),
+);
+
+const editableSettingKeySet = new Set<string>(EDITABLE_SETTING_KEYS);
+
+export function isEditableSettingKey(key: string): key is EditableSettingKey {
+  return editableSettingKeySet.has(key);
+}
+
 /** 获取采集相关配置的聚合方法 */
 export async function getCollectConfig() {
   const [lightMin, heavyMin, testModel, timeoutMs, retentionDays] = await Promise.all([

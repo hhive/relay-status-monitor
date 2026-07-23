@@ -24,7 +24,7 @@ export async function PATCH(request: Request, { params }: Params) {
       data: { resolved, resolvedAt: resolved ? new Date() : null },
     });
     return NextResponse.json(incident);
-  } catch (e) {
-    return NextResponse.json({ error: '更新失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: '更新失败' }, { status: 500 });
   }
 }

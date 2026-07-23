@@ -130,3 +130,13 @@ test('upstream destinations are validated on save and before credential decrypti
     'model listing must validate its destination before credential decryption',
   );
 });
+
+test('both SUB2API chat probes cap completions at five tokens', () => {
+  const adapter = source('src/lib/adapters/sub2api.ts');
+  assert.equal(
+    adapter.match(/max_tokens:\s*5/g)?.length,
+    2,
+    'non-streaming and streaming chat payloads must both use max_tokens: 5',
+  );
+  assert.doesNotMatch(adapter, /max_tokens:\s*(?:[6-9]|[1-9]\d+)/);
+});

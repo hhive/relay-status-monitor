@@ -115,7 +115,7 @@ export class Sub2ApiAdapter implements UpstreamAdapter {
           headers: this.headers(ctx.apiKey),
           body: JSON.stringify({
             model: model || ctx.testModel,
-            messages: [{ role: 'user', content: 'Say "ok" in one word.' }],
+            messages: [{ role: 'user', content: 'Reply only with "ok".' }],
             max_tokens: 5,
             stream: false,
           }),
@@ -146,8 +146,8 @@ export class Sub2ApiAdapter implements UpstreamAdapter {
           headers: this.headers(ctx.apiKey),
           body: JSON.stringify({
             model: model || ctx.testModel,
-            messages: [{ role: 'user', content: 'Count from 1 to 20, one number per line.' }],
-            max_tokens: 100,
+            messages: [{ role: 'user', content: 'Reply only with "ok".' }],
+            max_tokens: 5,
             stream: true,
           }),
         },

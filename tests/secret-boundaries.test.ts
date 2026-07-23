@@ -5,11 +5,17 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  assertAlertChannelMigrationSucceeded,
   mergeAndSealAlertChannelConfig,
   openAlertChannelConfig,
   sealAlertChannelConfig,
   toSafeAlertChannel,
 } from '../src/lib/alert-channel-config';
+import {
+  EDITABLE_SETTING_KEYS,
+  isEditableSettingKey,
+  SettingKeys,
+} from '../src/lib/settings';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const webhookUrl = 'https://open.feishu.cn/open-apis/bot/v2/hook/webhook-token-canary';
@@ -78,6 +84,59 @@ test('cron secret is environment-only in API, collector, settings form, and docu
 
   const readme = source('README.md');
   assert.doesNotMatch(readme, /数据库设置优先于环境变量|设置页保存.*CRON_SECRET/);
+});
+
+test('settings API exposes and accepts only the exact editable allowlist', () => {
+  const expectedKeys = Object.values(SettingKeys).sort();
+  assert.deepEqual([...EDITABLE_SETTING_KEYS].sort(), expectedKeys);
+  for (const key of expectedKeys) {
+    assert.equal(isEditableSettingKey(key), true, key);
+  }
+  for (const key of [
+    'cron_secret',
+    'CRON_SECRET',
+    'cron-secret',
+    'Cron_Secret',
+    'cron_secret_configured',
+    'unknown_setting',
+  ]) {
+    assert.equal(isEditableSettingKey(key), false, key);
+  }
+
+  const settingsRoute = source('src/app/api/settings/route.ts');
+  assert.match(settingsRoute, /isEditableSettingKey\(setting\.key\)/);
+  assert.match(settingsRoute, /cron_secret_configured/);
+  assert.doesNotMatch(settingsRoute, /setting\.key\s*!==\s*['"]cron_secret['"]/);
+
+  const validation = settingsRoute.indexOf('Object.keys(body)');
+  const firstWrite = settingsRoute.indexOf('setSetting(');
+  assert.ok(validation >= 0, 'PUT must validate the complete key set');
+  assert.ok(firstWrite > validation, 'PUT must validate every key before the first database write');
+});
+
+test('alert channel migration fails with identifiers only when any rows fail', () => {
+  assert.doesNotThrow(() => assertAlertChannelMigrationSucceeded([]));
+  assert.throws(
+    () => assertAlertChannelMigrationSucceeded([17, 29]),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /2/);
+      assert.match(error.message, /17/);
+      assert.match(error.message, /29/);
+      assert.doesNotMatch(error.message, /webhook|config|secret|ciphertext|token/i);
+      return true;
+    },
+  );
+
+  const migration = source('prisma/migrate-alert-channel-config.ts');
+  assert.match(migration, /failedIds\.push\(channel\.id\)/);
+  assert.match(migration, /assertAlertChannelMigrationSucceeded\(failedIds\)/);
+  assert.ok(
+    migration.indexOf('assertAlertChannelMigrationSucceeded(failedIds)')
+      > migration.indexOf('for (const channel of channels)'),
+    'migration failures must be asserted after processing all channels',
+  );
+  assert.match(migration, /main\(\)\.catch[\s\S]*process\.exitCode\s*=\s*1/);
 });
 
 test('alert channel routes expose only safe DTOs and migration is idempotent by format', () => {

@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
+  assertAlertChannelMigrationSucceeded,
   isSealedAlertChannelConfig,
   openAlertChannelConfig,
   sealAlertChannelConfig,
@@ -10,7 +11,7 @@ async function main() {
   let scanned = 0;
   let migrated = 0;
   let skipped = 0;
-  let failed = 0;
+  const failedIds: number[] = [];
 
   try {
     const channels = await prisma.alertChannel.findMany({
@@ -34,10 +35,11 @@ async function main() {
         });
         migrated += 1;
       } catch {
-        failed += 1;
+        failedIds.push(channel.id);
       }
     }
-    console.log(JSON.stringify({ scanned, migrated, skipped, failed }));
+    console.log(JSON.stringify({ scanned, migrated, skipped, failed: failedIds.length }));
+    assertAlertChannelMigrationSucceeded(failedIds);
   } finally {
     await prisma.$disconnect();
   }

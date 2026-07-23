@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { redactSensitiveText, safeErrorMessage } from '../src/lib/safe-error';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function apiRoutePaths(directory = path.join(projectRoot, 'src/app/api')): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolutePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) return apiRoutePaths(absolutePath);
+    return entry.name === 'route.ts' ? [path.relative(projectRoot, absolutePath)] : [];
+  });
+}
 
 test('redacts credentials from representative error formats', () => {
   const secretValues = [
@@ -47,18 +55,16 @@ test('safe error messages are bounded and never stringify response bodies', () =
   }
 });
 
-test('credential and collection routes return fixed errors instead of exception messages', () => {
-  for (const relativePath of [
-    'src/app/api/keys/[keyId]/metadata/route.ts',
-    'src/app/api/keys/[keyId]/test/route.ts',
-    'src/app/api/upstreams/[id]/keys/route.ts',
-    'src/app/api/upstreams/[id]/keys/[keyId]/route.ts',
-    'src/app/api/upstreams/[id]/refresh/route.ts',
-    'src/app/api/upstreams/[id]/test/route.ts',
-    'src/app/api/upstreams/route.ts',
-    'src/app/api/upstreams/[id]/route.ts',
-  ]) {
-    const source = readFileSync(path.join(projectRoot, relativePath), 'utf8');
-    assert.doesNotMatch(source, /\(e(?:rror)? as Error\)\.message|error instanceof Error \? error\.message/, relativePath);
+test('all API routes keep exception messages out of catch responses', () => {
+  const routes = apiRoutePaths();
+  assert.ok(routes.length > 0);
+  for (const relativePath of routes) {
+    const contents = readFileSync(path.join(projectRoot, relativePath), 'utf8');
+    assert.doesNotMatch(contents, /\.(?:message)\b/, relativePath);
+    assert.doesNotMatch(
+      contents,
+      /catch\s*\([^)]*\)[\s\S]*?NextResponse\.json\([^)]*\+[^)]*\)/,
+      relativePath,
+    );
   }
 });

@@ -23,8 +23,8 @@ export async function PUT(request: Request, { params }: Params) {
       data: body,
     });
     return NextResponse.json(rule);
-  } catch (e) {
-    return NextResponse.json({ error: '更新失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: '更新失败' }, { status: 500 });
   }
 }
 
@@ -40,7 +40,7 @@ export async function DELETE(_req: Request, { params }: Params) {
   try {
     await prisma.alertRule.delete({ where: { id: numericId } });
     return NextResponse.json({ ok: true });
-  } catch (e) {
-    return NextResponse.json({ error: '删除失败: ' + (e as Error).message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: '删除失败' }, { status: 500 });
   }
 }
