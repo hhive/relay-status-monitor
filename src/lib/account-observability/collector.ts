@@ -1,7 +1,7 @@
 import { prisma } from '../db';
 import { aggregateMinute, type ErrorEvent, type UsageEvent } from './aggregate';
 import { evaluateAccountAlerts } from './alerts';
-import { minuteBucket } from './metrics';
+import { microUsdToDecimal, minuteBucket } from './metrics';
 import {
   createSub2ApiReadonlyClient,
   queryProviderErrorRows,
@@ -30,8 +30,8 @@ export interface MetricMinuteWrite {
   inputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
-  userBilledMicroUsd: number;
-  accountBilledMicroUsd: number;
+  userBilledMicroUsd: bigint;
+  accountBilledMicroUsd: bigint;
   errorStatusCounts: Record<string, number>;
   errorPhaseCounts: Record<string, number>;
   sourceMaxUsageId: string | null;
@@ -150,7 +150,7 @@ export function createMetricWindowRunner(dependencies: MetricWindowDependencies)
   };
 }
 
-const MAX_REBUILD_MINUTES = 31 * 24 * 60;
+const MAX_REBUILD_MINUTES = 24 * 60;
 
 export async function rebuildAccountMetrics(
   start: Date,
@@ -159,7 +159,7 @@ export async function rebuildAccountMetrics(
 ): Promise<MetricWindowResult> {
   const minutes = (end.getTime() - start.getTime()) / 60_000;
   if (!Number.isInteger(minutes) || minutes <= 0 || minutes > MAX_REBUILD_MINUTES) {
-    throw new Error('bounded rebuild window is invalid');
+    throw new Error('bounded rebuild window must not exceed 24 hours');
   }
   const total = { readCount: 0, writeCount: 0, ignoredCount: 0 };
   for (let cursor = start.getTime(); cursor < end.getTime(); cursor += 10 * 60_000) {
@@ -169,7 +169,10 @@ export async function rebuildAccountMetrics(
   return total;
 }
 
-function productionMetricRunner(readClient: ReturnType<typeof createSub2ApiReadonlyClient>) {
+function productionMetricRunner(
+  readClient: ReturnType<typeof createSub2ApiReadonlyClient>,
+  runType: 'METRIC' | 'REBUILD' = 'METRIC',
+) {
   const startedAtByRun = new Map<number, number>();
   return createMetricWindowRunner({
     readUsageRows: (start, end) => queryUsageRows<SourceRow>(readClient, start, end),
@@ -177,7 +180,7 @@ function productionMetricRunner(readClient: ReturnType<typeof createSub2ApiReado
     loadActiveAccounts: () => prisma.sub2ApiAccount.findMany({ where: { syncState: 'ACTIVE' }, select: { id: true, sourceAccountId: true } }),
     startRun: async (window) => {
       const startedAt = new Date();
-      const run = await prisma.accountSyncRun.create({ data: { type: 'METRIC', status: 'RUNNING', startedAt, scanStart: window.start, scanEnd: window.end } });
+      const run = await prisma.accountSyncRun.create({ data: { type: runType, status: 'RUNNING', startedAt, scanStart: window.start, scanEnd: window.end } });
       startedAtByRun.set(run.id, startedAt.getTime());
       return run.id;
     },
@@ -187,7 +190,7 @@ function productionMetricRunner(readClient: ReturnType<typeof createSub2ApiReado
       startedAtByRun.delete(id);
     },
     upsertMinute: async (row) => {
-      const data = { successCount: row.successCount, upstreamErrorCount: row.upstreamErrorCount, eligibleCount: row.eligibleCount, durationCount: row.durationCount, durationSumMs: BigInt(row.durationSumMs), durationHistogram: row.durationHistogram, firstTokenHistogram: row.firstTokenHistogram, inputTokens: BigInt(row.inputTokens), cacheReadTokens: BigInt(row.cacheReadTokens), cacheCreationTokens: BigInt(row.cacheCreationTokens), userBilledUsd: (row.userBilledMicroUsd / 1_000_000).toFixed(6), accountBilledUsd: (row.accountBilledMicroUsd / 1_000_000).toFixed(6), errorStatusCounts: row.errorStatusCounts, errorPhaseCounts: row.errorPhaseCounts, sourceMaxUsageId: row.sourceMaxUsageId, sourceMaxErrorId: row.sourceMaxErrorId };
+      const data = { successCount: row.successCount, upstreamErrorCount: row.upstreamErrorCount, eligibleCount: row.eligibleCount, durationCount: row.durationCount, durationSumMs: BigInt(row.durationSumMs), durationHistogram: row.durationHistogram, firstTokenHistogram: row.firstTokenHistogram, inputTokens: BigInt(row.inputTokens), cacheReadTokens: BigInt(row.cacheReadTokens), cacheCreationTokens: BigInt(row.cacheCreationTokens), userBilledUsd: microUsdToDecimal(row.userBilledMicroUsd), accountBilledUsd: microUsdToDecimal(row.accountBilledMicroUsd), errorStatusCounts: row.errorStatusCounts, errorPhaseCounts: row.errorPhaseCounts, sourceMaxUsageId: row.sourceMaxUsageId, sourceMaxErrorId: row.sourceMaxErrorId };
       await prisma.accountMetricMinute.upsert({ where: { accountId_bucketStart: { accountId: row.accountId, bucketStart: row.bucketStart } }, create: { accountId: row.accountId, bucketStart: row.bucketStart, ...data }, update: data });
     },
   });
@@ -217,7 +220,7 @@ export async function runAccountMetricRebuild(start: Date, end: Date): Promise<M
   const client = createSub2ApiReadonlyClient();
   try {
     await querySchemaCapabilities(client);
-    return await rebuildAccountMetrics(start, end, productionMetricRunner(client));
+    return await rebuildAccountMetrics(start, end, productionMetricRunner(client, 'REBUILD'));
   } finally {
     await client.$disconnect();
   }

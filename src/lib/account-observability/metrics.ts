@@ -68,10 +68,20 @@ export function decimalToMicroUsd(value: string | number | null | undefined): bi
 }
 
 export function snapshotBillingMicroUsd(snapshot: BillingSnapshot): number {
+  return Number(snapshotBillingMicroUsdExact(snapshot));
+}
+
+export function snapshotBillingMicroUsdExact(snapshot: BillingSnapshot): bigint {
   const base = decimalToMicroUsd(snapshot.accountStatsCost ?? snapshot.totalCost);
   const multiplier = decimalToMicroUsd(snapshot.rateMultiplier ?? 1);
   const result = (base * multiplier + BigInt(500000)) / BigInt(1000000);
-  return Number(result);
+  return result;
+}
+
+export function microUsdToDecimal(value: bigint): string {
+  const negative = value < BigInt(0);
+  const absolute = negative ? -value : value;
+  return `${negative ? '-' : ''}${absolute / BigInt(1_000_000)}.${(absolute % BigInt(1_000_000)).toString().padStart(6, '0')}`;
 }
 
 export function effectiveBillingRate(snapshot: BillingRateSnapshot, now = new Date()): number | null {

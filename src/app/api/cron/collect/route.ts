@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server';
-import { runCollectCycle } from '@/lib/collector';
 import { runAccountObservabilityCycle } from '@/lib/account-observability/collector';
 
 /**
  * 定时采集入口
  * 由外部 crontab 每分钟触发：
  *   * * * * * curl -H "Authorization: Bearer $CRON_SECRET" https://your-monitor.example/api/cron/collect
- *
- * 内部根据当前分钟数自动判断 light / heavy 模式
  */
 export async function GET(request: Request) {
   const start = Date.now();
@@ -21,13 +18,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: '未授权' }, { status: 401 });
     }
 
-    const result = await runCollectCycle();
     const accountObservability = await runAccountObservabilityCycle();
     const elapsed = Date.now() - start;
     return NextResponse.json({
       ok: true,
-      collected: result.collected,
-      mode: result.mode,
       elapsedMs: elapsed,
       time: new Date().toISOString(),
       accountObservability,

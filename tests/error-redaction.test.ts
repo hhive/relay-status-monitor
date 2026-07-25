@@ -44,11 +44,7 @@ test('safe error messages are bounded and never stringify response bodies', () =
   assert.ok(message.length <= 240);
   assert.doesNotMatch(message, /final-canary/);
 
-  for (const relativePath of [
-    'src/lib/adapters/sub2api.ts',
-    'src/lib/adapters/newapi.ts',
-    'src/lib/alerts/channels/feishu.ts',
-  ]) {
+  for (const relativePath of ['src/lib/alerts/channels/feishu.ts']) {
     const source = readFileSync(path.join(projectRoot, relativePath), 'utf8');
     assert.doesNotMatch(source, /\.text\s*\(/, relativePath);
     if (relativePath.endsWith('feishu.ts')) assert.match(source, /responseBody\.code/);

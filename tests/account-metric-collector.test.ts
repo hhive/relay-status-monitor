@@ -22,6 +22,7 @@ test('server rebuild command requires explicit UTC bounds and reuses production 
   assert.match(command, /--start/);
   assert.match(command, /--end/);
   assert.match(command, /runAccountMetricRebuild/);
+  assert.match(collector, /productionMetricRunner\(client, 'REBUILD'\)/);
 });
 
 test('metric cycle recomputes the last ten complete UTC minutes including empty buckets for active accounts', async () => {
@@ -98,4 +99,23 @@ test('bounded rebuild reuses the metric window runner and rejects unbounded rang
     new Date('2026-07-25T00:00:00Z'),
     async () => ({ readCount: 0, writeCount: 0, ignoredCount: 0 }),
   ), /bounded/i);
+  await assert.rejects(() => rebuildAccountMetrics(
+    new Date('2026-07-24T00:00:00Z'),
+    new Date('2026-07-25T00:01:00Z'),
+    async () => ({ readCount: 0, writeCount: 0, ignoredCount: 0 }),
+  ), /24 hours/i);
+});
+
+test('rebuild stops after the first failed batch and never executes later windows', async () => {
+  let attempts = 0;
+  await assert.rejects(() => rebuildAccountMetrics(
+    new Date('2026-07-25T00:00:00Z'),
+    new Date('2026-07-25T00:25:00Z'),
+    async () => {
+      attempts += 1;
+      if (attempts === 2) throw new Error('source failed');
+      return { readCount: 0, writeCount: 0, ignoredCount: 0 };
+    },
+  ), /source failed/);
+  assert.equal(attempts, 2);
 });

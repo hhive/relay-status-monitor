@@ -1,4 +1,4 @@
-// Relay Status Monitor - 中转站状态监控系统数据模型（多分组版）
+// Relay Status Monitor - Sub2API 账号可观测数据模型
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,29 +9,6 @@ datasource db {
 }
 
 // ============ 枚举 ============
-
-/// 上游类型
-enum UpstreamType {
-  SUB2API
-  NEW_API
-}
-
-/// 状态
-enum UpstreamStatus {
-  ONLINE
-  DEGRADED
-  OFFLINE
-  UNKNOWN
-}
-
-/// 告警类型
-enum IncidentType {
-  BALANCE_LOW
-  LATENCY_HIGH
-  UNAVAILABLE
-  AVAILABILITY_LOW
-  TEST_FAILED
-}
 
 /// 告警严重级别
 enum Severity {
@@ -59,78 +36,7 @@ enum AccountSyncRunStatus {
 
 // ============ 核心表 ============
 
-/// 上游中转站（站点级，保留元信息 + 汇总状态）
-model Upstream {
-  id          Int           @id @default(autoincrement())
-  name        String        @unique
-  baseUrl     String
-  type        UpstreamType  @default(SUB2API)
-  /// 汇总状态（由采集器聚合所有 key 的状态后回写）
-  status      UpstreamStatus @default(UNKNOWN)
-  enabled     Boolean       @default(true)
-  priority    Int           @default(0)
-  /// 默认测速模型（新建 key 时继承，可被 key 级覆盖）
-  testModel   String?       @db.Text
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-
-  keys        UpstreamKey[]
-  metrics     Metric[]
-  incidents   Incident[]
-
-  @@index([enabled, status])
-  @@index([type])
-}
-
-/// 上游分组/Token 监控单元（凭证级，承载所有凭证和独立指标）
-model UpstreamKey {
-  id              Int            @id @default(autoincrement())
-  upstreamId      Int
-  upstream        Upstream       @relation(fields: [upstreamId], references: [id], onDelete: Cascade)
-  /// 分组名（sub2api 的分组名 / new-api 的 Token 名/分组名）
-  group           String         @default("default")
-  /// 可选自定义标签
-  label           String?
-  /// 远端 API Token 名称（NEW_API）
-  keyName         String?
-  /// 远端 Token 实际绑定分组（NEW_API）
-  groupName       String?
-  /// 远端分组说明（NEW_API）
-  groupDescription String?       @db.Text
-  /// 远端分组倍率（NEW_API）
-  groupRateMultiplier Float?
-  /// 远端 Token ID，按字符串保存以兼容不同实现
-  remoteKeyId     String?
-  /// 最近一次成功或部分成功同步元数据的时间
-  metadataSyncedAt DateTime?
-  /// 最近一次元数据同步错误（不包含凭证）
-  metadataError   String?        @db.Text
-  /// AES-256-GCM 加密的 API Key（测速用）
-  apiKeyEnc       String?        @db.Text
-  /// new-api 系统访问令牌（查余额用，加密）
-  accessTokenEnc  String?        @db.Text
-  /// new-api 用户 ID
-  userId          String?
-  /// 本 key 的独立状态
-  status          UpstreamStatus @default(UNKNOWN)
-  lastBalance     Float?
-  lastLatencyMs   Int?
-  lastCollectedAt DateTime?
-  lastError       String?        @db.Text
-  /// key 级测速模型覆盖（为空则用 upstream.testModel）
-  testModel       String?        @db.Text
-  enabled         Boolean        @default(true)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-
-  metrics         Metric[]
-  incidents       Incident[]
-
-  @@unique([upstreamId, group])
-  @@index([upstreamId, enabled, status])
-}
-
-/// Sub2API 账号只读投影，独立于手工探针 UpstreamKey
+/// Sub2API 账号只读投影
 model Sub2ApiAccount {
   id                         Int                    @id @default(autoincrement())
   sourceAccountId            String                 @unique
@@ -256,6 +162,7 @@ model AccountAlertEvent {
   severity    Severity         @default(WARNING)
   metricValue Float?
   message     String           @db.Text
+  notificationDeliveries Json?
   resolved    Boolean          @default(false)
   resolvedAt  DateTime?
   createdAt   DateTime         @default(now())
@@ -264,62 +171,7 @@ model AccountAlertEvent {
   @@index([resolved, createdAt])
 }
 
-/// 每次采集的指标快照（时间序列）
-model Metric {
-  id            Int      @id @default(autoincrement())
-  upstreamId    Int
-  upstream      Upstream @relation(fields: [upstreamId], references: [id], onDelete: Cascade)
-  upstreamKeyId Int
-  upstreamKey   UpstreamKey @relation(fields: [upstreamKeyId], references: [id], onDelete: Cascade)
-  balance         Float?
-  latencyMs       Int?
-  modelTestOk     Boolean?
-  modelTestLatMs  Int?
-  streamTps       Float?
-  streamFirstLat  Int?
-  success         Boolean  @default(false)
-  errorMessage    String?  @db.Text
-  recordedAt      DateTime @default(now())
-
-  @@index([upstreamId, recordedAt])
-  @@index([upstreamKeyId, recordedAt])
-  @@index([recordedAt])
-}
-
-/// 告警事件
-model Incident {
-  id             Int          @id @default(autoincrement())
-  upstreamId     Int
-  upstream       Upstream     @relation(fields: [upstreamId], references: [id], onDelete: Cascade)
-  upstreamKeyId  Int?
-  upstreamKey    UpstreamKey? @relation(fields: [upstreamKeyId], references: [id], onDelete: SetNull)
-  type           IncidentType
-  severity       Severity     @default(WARNING)
-  message        String       @db.Text
-  metricValue    Float?
-  resolved       Boolean      @default(false)
-  resolvedAt     DateTime?
-  createdAt      DateTime     @default(now())
-
-  @@index([upstreamId, resolved, createdAt])
-  @@index([upstreamKeyId, resolved, createdAt])
-  @@index([resolved, createdAt])
-}
-
 // ============ 配置表 ============
-
-model AlertRule {
-  id          Int     @id @default(autoincrement())
-  name        String  @unique
-  metric      String
-  operator    String  @default("lt")
-  threshold   Float
-  severity    Severity @default(WARNING)
-  cooldownMin Int     @default(30)
-  enabled     Boolean @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
 
 model AlertChannel {
   id        Int     @id @default(autoincrement())

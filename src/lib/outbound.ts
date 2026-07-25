@@ -1,8 +1,5 @@
-export type UpstreamKind = 'SUB2API' | 'NEW_API';
-
 export type OutboundErrorCategory =
   | 'invalid_destination'
-  | 'unsupported_upstream'
   | 'upstream_redirect'
   | 'upstream_network';
 
@@ -19,39 +16,6 @@ export class OutboundRequestError extends Error {
     this.name = 'OutboundRequestError';
     this.category = category;
   }
-}
-
-/** Validate the exact destinations enabled by this deployment. */
-export function validateUpstreamBaseUrl(kind: UpstreamKind, raw: string): URL {
-  if (kind === 'NEW_API') {
-    throw new OutboundRequestError('unsupported_upstream', 'NEW_API 上游未启用');
-  }
-
-  const trimmed = raw.trim();
-  if (trimmed !== 'http://127.0.0.1:8080' && trimmed !== 'http://127.0.0.1:8080/') {
-    throw new OutboundRequestError('invalid_destination', 'SUB2API 仅支持 http://127.0.0.1:8080');
-  }
-
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    throw new OutboundRequestError('invalid_destination', 'SUB2API 上游地址无效');
-  }
-
-  if (
-    url.protocol !== 'http:' ||
-    url.hostname !== '127.0.0.1' ||
-    url.port !== '8080' ||
-    url.username ||
-    url.password ||
-    url.pathname !== '/' ||
-    url.search ||
-    url.hash
-  ) {
-    throw new OutboundRequestError('invalid_destination', 'SUB2API 仅支持 http://127.0.0.1:8080');
-  }
-  return url;
 }
 
 export function validateFeishuWebhookUrl(raw: string): URL {

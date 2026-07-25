@@ -54,6 +54,8 @@ interface AlertRule {
   operator: string;
   threshold: number;
   severity: string;
+  minRequests: number;
+  minPromptTokens: number;
   cooldownMin: number;
   enabled: boolean;
 }
@@ -67,7 +69,7 @@ interface AlertChannel {
   enabled: boolean;
 }
 
-type NumericRuleField = 'threshold' | 'cooldownMin';
+type NumericRuleField = 'threshold' | 'minRequests' | 'minPromptTokens' | 'cooldownMin';
 type RuleDraft = Record<NumericRuleField, string>;
 type RuleDrafts = Record<number, RuleDraft>;
 
@@ -77,6 +79,8 @@ function createRuleDrafts(rules: AlertRule[]): RuleDrafts {
       rule.id,
       {
         threshold: String(rule.threshold),
+        minRequests: String(rule.minRequests),
+        minPromptTokens: String(rule.minPromptTokens),
         cooldownMin: String(rule.cooldownMin),
       },
     ])
@@ -135,7 +139,7 @@ function RulesTab() {
   const fetchRules = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/alert-rules');
+      const res = await fetch('/api/account-alert-rules');
       const data = await res.json();
       const nextRules = Array.isArray(data) ? data : [];
       setRules(nextRules);
@@ -155,7 +159,7 @@ function RulesTab() {
   async function toggleRule(rule: AlertRule) {
     setUpdatingId(rule.id);
     try {
-      await apiFetch(`/api/alert-rules/${rule.id}`, {
+      await apiFetch(`/api/account-alert-rules/${rule.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: !rule.enabled }),
@@ -170,7 +174,7 @@ function RulesTab() {
     setUpdatingId(id);
     try {
       const payload: Record<string, unknown> = { [field]: value };
-      await apiFetch(`/api/alert-rules/${id}`, {
+      await apiFetch(`/api/account-alert-rules/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -186,6 +190,8 @@ function RulesTab() {
       ...current,
       [rule.id]: {
         threshold: current[rule.id]?.threshold ?? String(rule.threshold),
+        minRequests: current[rule.id]?.minRequests ?? String(rule.minRequests),
+        minPromptTokens: current[rule.id]?.minPromptTokens ?? String(rule.minPromptTokens),
         cooldownMin: current[rule.id]?.cooldownMin ?? String(rule.cooldownMin),
         [field]: value,
       },
@@ -202,7 +208,7 @@ function RulesTab() {
 
     setUpdatingId(rule.id);
     try {
-      const res = await apiFetch(`/api/alert-rules/${rule.id}`, {
+      const res = await apiFetch(`/api/account-alert-rules/${rule.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: resolved.value }),
@@ -215,6 +221,8 @@ function RulesTab() {
         ...current,
         [updatedRule.id]: {
           threshold: String(updatedRule.threshold),
+          minRequests: String(updatedRule.minRequests),
+          minPromptTokens: String(updatedRule.minPromptTokens),
           cooldownMin: String(updatedRule.cooldownMin),
         },
       }));
@@ -237,7 +245,7 @@ function RulesTab() {
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
-        配置各指标的告警阈值。当指标达到阈值时，会自动创建告警并推送通知。
+        配置账号真实流量与同步状态告警。规则身份由系统固定，只能调整适用参数。
       </p>
 
       {rules.length === 0 ? (
@@ -278,10 +286,9 @@ function RulesTab() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      <SelectItem value="lt">小于</SelectItem>
-                      <SelectItem value="gt">大于</SelectItem>
-                      <SelectItem value="lte">小于等于</SelectItem>
-                      <SelectItem value="gte">大于等于</SelectItem>
+                      {ruleOperators(r.metric).map((operator) => (
+                        <SelectItem key={operator} value={operator}>{operatorLabel(operator)}</SelectItem>
+                      ))}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
@@ -302,21 +309,40 @@ function RulesTab() {
                 />
 
                 <span className="mx-1 text-muted-foreground">·</span>
+                <span className="text-muted-foreground">级别</span>
+                <Select value={r.severity} onValueChange={(value) => updateRule(r.id, 'severity', value)}>
+                  <SelectTrigger className="h-8 w-[110px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="INFO">INFO</SelectItem>
+                      <SelectItem value="WARNING">WARNING</SelectItem>
+                      <SelectItem value="CRITICAL">CRITICAL</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+
+                {ruleUsesTrafficSamples(r.metric) && (
+                  <>
+                    <span className="mx-1 text-muted-foreground">·</span>
+                    <span className="text-muted-foreground">最小请求</span>
+                    <RuleNumberInput rule={r} field="minRequests" drafts={drafts} updatingId={updatingId}
+                      onChange={updateRuleDraft} onCommit={commitRuleDraft} />
+                  </>
+                )}
+
+                {r.metric === 'cache_hit_low' && (
+                  <>
+                    <span className="mx-1 text-muted-foreground">·</span>
+                    <span className="text-muted-foreground">最小 Prompt Token</span>
+                    <RuleNumberInput rule={r} field="minPromptTokens" drafts={drafts} updatingId={updatingId}
+                      onChange={updateRuleDraft} onCommit={commitRuleDraft} wide />
+                  </>
+                )}
+
+                <span className="mx-1 text-muted-foreground">·</span>
                 <span className="text-muted-foreground">冷却</span>
-                <Input
-                  type="number"
-                  className="h-8 w-16"
-                  value={drafts[r.id]?.cooldownMin ?? String(r.cooldownMin)}
-                  disabled={updatingId === r.id}
-                  onChange={(e) => updateRuleDraft(r, 'cooldownMin', e.target.value)}
-                  onBlur={() => void commitRuleDraft(r, 'cooldownMin')}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      event.currentTarget.blur();
-                    }
-                  }}
-                />
+                <RuleNumberInput rule={r} field="cooldownMin" drafts={drafts} updatingId={updatingId}
+                  onChange={updateRuleDraft} onCommit={commitRuleDraft} />
                 <span className="text-muted-foreground">分钟</span>
               </div>
             </CardContent>
@@ -324,6 +350,34 @@ function RulesTab() {
         ))
       )}
     </div>
+  );
+}
+
+function RuleNumberInput({ rule, field, drafts, updatingId, onChange, onCommit, wide = false }: {
+  rule: AlertRule;
+  field: NumericRuleField;
+  drafts: RuleDrafts;
+  updatingId: number | null;
+  onChange: (rule: AlertRule, field: NumericRuleField, value: string) => void;
+  onCommit: (rule: AlertRule, field: NumericRuleField) => Promise<void>;
+  wide?: boolean;
+}) {
+  return (
+    <Input
+      type="number"
+      min={0}
+      className={cn('h-8', wide ? 'w-28' : 'w-20')}
+      value={drafts[rule.id]?.[field] ?? String(rule[field])}
+      disabled={updatingId === rule.id}
+      onChange={(event) => onChange(rule, field, event.target.value)}
+      onBlur={() => void onCommit(rule, field)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+      }}
+    />
   );
 }
 
@@ -879,10 +933,27 @@ function SeverityBadge({ severity }: { severity: string }) {
 
 function metricLabel(metric: string): string {
   const map: Record<string, string> = {
-    balance: '余额($)',
-    latency: '延迟(ms)',
-    consecutive_failures: '连续失败次数',
-    availability: '可用率(%)',
+    availability_low: '可用率',
+    error_rate_high: '错误率',
+    duration_p95_high: '总延迟 P95',
+    first_token_p95_high: '首 Token P95',
+    cache_hit_low: '缓存命中率',
+    unschedulable: '不可调度状态',
+    sync_stale: '同步陈旧分钟数',
   };
   return map[metric] || metric;
+}
+
+function ruleUsesTrafficSamples(metric: string): boolean {
+  return !['unschedulable', 'sync_stale'].includes(metric);
+}
+
+function ruleOperators(metric: string): string[] {
+  if (metric === 'unschedulable') return ['eq'];
+  if (['availability_low', 'cache_hit_low'].includes(metric)) return ['lt', 'lte'];
+  return ['gt', 'gte'];
+}
+
+function operatorLabel(operator: string): string {
+  return { lt: '小于', lte: '小于等于', gt: '大于', gte: '大于等于', eq: '等于' }[operator] ?? operator;
 }

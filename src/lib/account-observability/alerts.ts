@@ -1,14 +1,14 @@
 import { prisma } from '../db';
-import type { Severity } from '@prisma/client';
+import type { Prisma, Severity } from '@prisma/client';
 import { sendAccountNotification } from '../alerts/channels/feishu';
 import { effectiveBillingRate, histogramP95, mergeLatencyHistogram, minuteBucket } from './metrics';
 
 export type AccountAlertMetric =
-  | 'availability'
-  | 'error_rate'
-  | 'duration_p95'
-  | 'first_token_p95'
-  | 'cache_hit_rate'
+  | 'availability_low'
+  | 'error_rate_high'
+  | 'duration_p95_high'
+  | 'first_token_p95_high'
+  | 'cache_hit_low'
   | 'upstream_rate_multiplier'
   | 'unschedulable'
   | 'sync_stale';
@@ -68,25 +68,66 @@ export interface AccountAlertEventRecord {
   severity?: Severity;
   metricValue?: number | null;
   message: string;
+  notificationDeliveries?: unknown;
 }
 
-interface NewAccountAlertEvent extends Omit<AccountAlertEventRecord, 'id'> {
+interface NewAccountAlertEvent extends Omit<AccountAlertEventRecord, 'id' | 'notificationDeliveries'> {
   severity: Severity;
   metricValue: number | null;
+  notificationDeliveries: NotificationDeliveries;
   createdAt: Date;
 }
 
 export interface AccountAlertDependencies {
   loadRules: () => Promise<AccountAlertRuleRecord[]>;
   loadAccounts: (window: { start: Date; end: Date }) => Promise<AccountAlertAccountRecord[]>;
+  loadLatestMetricBucket: (accountId: number) => Promise<Date | null>;
   findOpenEvent: (accountId: number, ruleId: number) => Promise<AccountAlertEventRecord | null>;
   findRecentEvent: (accountId: number, ruleId: number, since: Date) => Promise<AccountAlertEventRecord | null>;
   createEvent: (event: NewAccountAlertEvent) => Promise<AccountAlertEventRecord>;
+  updateNotificationDeliveries: (id: number, deliveries: NotificationDeliveries) => Promise<void>;
   resolveEvent: (id: number, at: Date) => Promise<void>;
-  notify: (event: AccountAlertEventRecord, account: AccountAlertAccountRecord, recovery: boolean) => Promise<void>;
+  notify: (
+    event: AccountAlertEventRecord,
+    account: AccountAlertAccountRecord,
+    recovery: boolean,
+    deliveredChannelIds: readonly number[],
+    onDelivered: (channelId: number) => Promise<void>,
+  ) => Promise<void>;
+}
+
+interface NotificationDeliveries extends Prisma.JsonObject {
+  trigger: number[];
+  recovery: number[];
 }
 
 const ALERT_WINDOW_MINUTES = 10;
+
+function parseNotificationDeliveries(value: unknown): NotificationDeliveries {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const channelIds = (phase: unknown) => Array.isArray(phase)
+    ? [...new Set(phase.filter((id): id is number => Number.isSafeInteger(id) && id > 0))]
+    : [];
+  return { trigger: channelIds(record.trigger), recovery: channelIds(record.recovery) };
+}
+
+async function notifyEvent(
+  dependencies: AccountAlertDependencies,
+  event: AccountAlertEventRecord,
+  account: AccountAlertAccountRecord,
+  recovery: boolean,
+): Promise<void> {
+  let deliveries = parseNotificationDeliveries(event.notificationDeliveries);
+  const phase = recovery ? 'recovery' : 'trigger';
+  await dependencies.notify(event, account, recovery, deliveries[phase], async (channelId) => {
+    if (!Number.isSafeInteger(channelId) || channelId <= 0 || deliveries[phase].includes(channelId)) return;
+    deliveries = { ...deliveries, [phase]: [...deliveries[phase], channelId] };
+    await dependencies.updateNotificationDeliveries(event.id, deliveries);
+    event.notificationDeliveries = deliveries;
+  });
+}
 
 export function evaluateAccountMetricAlert(input: {
   metric: Exclude<AccountAlertMetric, 'unschedulable' | 'sync_stale'>;
@@ -99,9 +140,9 @@ export function evaluateAccountMetricAlert(input: {
   snapshotFresh?: boolean;
 }): { triggered: true; metric: AccountAlertMetric; value: number } | null {
   if (input.value == null || input.eligibleCount < input.minRequests) return null;
-  if (input.metric === 'cache_hit_rate' && (input.promptTokens ?? 0) < (input.minPromptTokens ?? 0)) return null;
+  if (input.metric === 'cache_hit_low' && (input.promptTokens ?? 0) < (input.minPromptTokens ?? 0)) return null;
   if (input.metric === 'upstream_rate_multiplier' && input.snapshotFresh !== true) return null;
-  const lowerIsBad = input.metric === 'availability' || input.metric === 'cache_hit_rate';
+  const lowerIsBad = input.metric === 'availability_low' || input.metric === 'cache_hit_low';
   const triggered = lowerIsBad ? input.value < input.threshold : input.value > input.threshold;
   return triggered ? { triggered: true, metric: input.metric, value: input.value } : null;
 }
@@ -119,26 +160,29 @@ function compare(value: number, operator: string, threshold: number): boolean {
 
 function metricLabel(metric: AccountAlertMetric): string {
   const labels: Record<AccountAlertMetric, string> = {
-    availability: '可用率', error_rate: '上游错误率', duration_p95: '总耗时 P95',
-    first_token_p95: '首字耗时 P95', cache_hit_rate: '缓存命中率',
+    availability_low: '可用率', error_rate_high: '上游错误率', duration_p95_high: '总耗时 P95',
+    first_token_p95_high: '首字耗时 P95', cache_hit_low: '缓存命中率',
     upstream_rate_multiplier: '上游倍率', unschedulable: '不可调度', sync_stale: '同步陈旧分钟数',
   };
   return labels[metric];
 }
 
-function evaluateRule(rule: AccountAlertRuleRecord, account: AccountAlertAccountRecord, now: Date): { available: boolean; triggered: boolean; value: number | null } {
+function evaluateRule(
+  rule: AccountAlertRuleRecord,
+  account: AccountAlertAccountRecord,
+  now: Date,
+  latestMetricBucketStart: Date | null,
+): { available: boolean; triggered: boolean; value: number | null } {
   if (rule.metric === 'unschedulable') {
     const value = account.schedulable === false ? 1 : 0;
     return { available: account.schedulable != null, triggered: compare(value, rule.operator, rule.threshold), value };
   }
   if (rule.metric === 'sync_stale') {
-    const latestMetricMinute = account.metricMinutes.reduce<Date | null>((latest, minute) =>
-      latest == null || minute.bucketStart > latest ? minute.bucketStart : latest, null);
-    if (!account.lastSyncedAt || !latestMetricMinute) return { available: true, triggered: true, value: null };
+    if (!account.lastSyncedAt || !latestMetricBucketStart) return { available: true, triggered: true, value: null };
     const value = Math.max(
       0,
       (now.getTime() - account.lastSyncedAt.getTime()) / 60_000,
-      (now.getTime() - latestMetricMinute.getTime()) / 60_000,
+      (now.getTime() - latestMetricBucketStart.getTime()) / 60_000,
     );
     return { available: true, triggered: compare(value, rule.operator, rule.threshold), value };
   }
@@ -160,11 +204,11 @@ function evaluateRule(rule: AccountAlertRuleRecord, account: AccountAlertAccount
   const promptTokens = minutes.reduce((sum, item) => sum + item.inputTokens + item.cacheReadTokens + item.cacheCreationTokens, BigInt(0));
   let value: number | null = null;
   switch (rule.metric) {
-    case 'availability': value = eligibleCount ? minutes.reduce((sum, item) => sum + item.successCount, 0) / eligibleCount : null; break;
-    case 'error_rate': value = eligibleCount ? minutes.reduce((sum, item) => sum + item.upstreamErrorCount, 0) / eligibleCount : null; break;
-    case 'duration_p95': value = histogramP95(mergeLatencyHistogram(minutes.map((item) => (item.durationHistogram ?? {}) as Record<string, number>))); break;
-    case 'first_token_p95': value = histogramP95(mergeLatencyHistogram(minutes.map((item) => (item.firstTokenHistogram ?? {}) as Record<string, number>))); break;
-    case 'cache_hit_rate': {
+    case 'availability_low': value = eligibleCount ? minutes.reduce((sum, item) => sum + item.successCount, 0) / eligibleCount : null; break;
+    case 'error_rate_high': value = eligibleCount ? minutes.reduce((sum, item) => sum + item.upstreamErrorCount, 0) / eligibleCount : null; break;
+    case 'duration_p95_high': value = histogramP95(mergeLatencyHistogram(minutes.map((item) => (item.durationHistogram ?? {}) as Record<string, number>))); break;
+    case 'first_token_p95_high': value = histogramP95(mergeLatencyHistogram(minutes.map((item) => (item.firstTokenHistogram ?? {}) as Record<string, number>))); break;
+    case 'cache_hit_low': {
       if (promptTokens < BigInt(rule.minPromptTokens)) return { available: false, triggered: false, value: null };
       const cacheRead = minutes.reduce((sum, item) => sum + item.cacheReadTokens, BigInt(0));
       value = promptTokens === BigInt(0) ? null : Number(cacheRead) / Number(promptTokens);
@@ -181,29 +225,43 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
     const start = new Date(end.getTime() - ALERT_WINDOW_MINUTES * 60_000);
     const [rules, accounts] = await Promise.all([dependencies.loadRules(), dependencies.loadAccounts({ start, end })]);
     for (const account of accounts) {
+      const needsLatestMetricBucket = rules.some((rule) =>
+        rule.enabled && rule.metric === 'sync_stale' && (rule.accountId == null || rule.accountId === account.id));
+      const latestMetricBucketStart = needsLatestMetricBucket
+        ? await dependencies.loadLatestMetricBucket(account.id)
+        : null;
       for (const rule of rules) {
         if (!rule.enabled) continue;
         if (rule.accountId != null && rule.accountId !== account.id) continue;
-        const result = evaluateRule(rule, account, now);
+        const result = evaluateRule(rule, account, now, latestMetricBucketStart);
         const open = await dependencies.findOpenEvent(account.id, rule.id);
         if (!result.available) continue;
         if (!result.triggered) {
           if (open) {
+            if (open.notificationDeliveries != null) {
+              await notifyEvent(dependencies, open, account, false);
+            }
+            await notifyEvent(dependencies, open, account, true);
             await dependencies.resolveEvent(open.id, now);
-            await dependencies.notify(open, account, true);
           }
           continue;
         }
-        if (open) continue;
+        if (open) {
+          if (open.notificationDeliveries != null) {
+            await notifyEvent(dependencies, open, account, false);
+          }
+          continue;
+        }
         const cooldownStart = new Date(now.getTime() - rule.cooldownMin * 60_000);
         if (await dependencies.findRecentEvent(account.id, rule.id, cooldownStart)) continue;
         const event = await dependencies.createEvent({
           accountId: account.id, ruleId: rule.id, metric: rule.metric,
           severity: rule.severity ?? 'WARNING', metricValue: result.value,
           message: `[${account.name}] ${metricLabel(rule.metric)} ${result.value ?? '-'} ${rule.operator} ${rule.threshold}`,
+          notificationDeliveries: { trigger: [], recovery: [] },
           createdAt: now,
         });
-        await dependencies.notify(event, account, false);
+        await notifyEvent(dependencies, event, account, false);
       }
     }
   };
@@ -216,10 +274,27 @@ export async function evaluateAccountAlerts(now = new Date()): Promise<void> {
       where: { syncState: 'ACTIVE' },
       include: { metricMinutes: { where: { bucketStart: { gte: start, lt: end } } } },
     })) as AccountAlertAccountRecord[],
+    loadLatestMetricBucket: async (accountId) => {
+      const latest = await prisma.accountMetricMinute.findFirst({
+        where: { accountId },
+        orderBy: { bucketStart: 'desc' },
+        select: { bucketStart: true },
+      });
+      return latest?.bucketStart ?? null;
+    },
     findOpenEvent: async (accountId, ruleId) => prisma.accountAlertEvent.findFirst({ where: { accountId, ruleId, resolved: false }, orderBy: { createdAt: 'desc' } }),
     findRecentEvent: async (accountId, ruleId, since) => prisma.accountAlertEvent.findFirst({ where: { accountId, ruleId, createdAt: { gt: since } }, orderBy: { createdAt: 'desc' } }),
-    createEvent: async (event) => prisma.accountAlertEvent.create({ data: event }),
+    createEvent: async (event) => prisma.accountAlertEvent.create({
+      data: { ...event, notificationDeliveries: event.notificationDeliveries as Prisma.InputJsonValue },
+    }),
+    updateNotificationDeliveries: async (id, notificationDeliveries) => {
+      await prisma.accountAlertEvent.update({
+        where: { id },
+        data: { notificationDeliveries: notificationDeliveries as Prisma.InputJsonValue },
+      });
+    },
     resolveEvent: async (id, at) => { await prisma.accountAlertEvent.update({ where: { id }, data: { resolved: true, resolvedAt: at } }); },
-    notify: async (event, account, recovery) => sendAccountNotification(event, account, recovery),
+    notify: async (event, account, recovery, deliveredChannelIds, onDelivered) =>
+      sendAccountNotification(event, account, recovery, deliveredChannelIds, onDelivered),
   })(now);
 }

@@ -35,14 +35,14 @@ test('strict positive integer parser accepts only safe canonical decimals', () =
 });
 
 test('safe redirect permits one leading slash and rejects dangerous forms', () => {
-  for (const value of ['/', '/upstreams', '/upstreams/1?tab=keys']) {
+  for (const value of ['/', '/accounts', '/accounts/1?window=last24h']) {
     assert.equal(safeRedirectPath(value), value);
   }
 
   for (const value of [
     null,
     '',
-    'upstreams',
+    'accounts',
     '//evil.example',
     '/\\evil.example',
     'https://evil.example',
@@ -61,16 +61,10 @@ test('safe redirect permits one leading slash and rejects dangerous forms', () =
 test('dynamic API routes use the strict parser instead of Number coercion', () => {
   const routes = [
     'src/app/api/alert-channels/[id]/route.ts',
-    'src/app/api/alert-rules/[id]/route.ts',
-    'src/app/api/incidents/[id]/route.ts',
-    'src/app/api/keys/[keyId]/metadata/route.ts',
-    'src/app/api/keys/[keyId]/test/route.ts',
-    'src/app/api/upstreams/[id]/keys/[keyId]/route.ts',
-    'src/app/api/upstreams/[id]/keys/route.ts',
-    'src/app/api/upstreams/[id]/models/route.ts',
-    'src/app/api/upstreams/[id]/refresh/route.ts',
-    'src/app/api/upstreams/[id]/route.ts',
-    'src/app/api/upstreams/[id]/test/route.ts',
+    'src/app/api/account-alert-events/[id]/route.ts',
+    'src/app/api/account-alert-rules/[id]/route.ts',
+    'src/app/api/accounts/[id]/route.ts',
+    'src/app/api/accounts/[id]/billing-alert/route.ts',
   ];
 
   for (const route of routes) {
@@ -78,22 +72,6 @@ test('dynamic API routes use the strict parser instead of Number coercion', () =
     assert.match(contents, /parseStrictPositiveInteger\(/, route);
     assert.doesNotMatch(contents, /Number\((?:id|keyId)\)/, route);
   }
-});
-
-test('metrics and incidents validate every numeric query parameter strictly', () => {
-  for (const route of ['src/app/api/metrics/route.ts', 'src/app/api/incidents/route.ts']) {
-    const contents = source(route);
-    assert.match(contents, /parseStrictPositiveInteger\(/, route);
-    assert.doesNotMatch(contents, /Number\(searchParams\.get/, route);
-    assert.doesNotMatch(contents, /Number\((?:upstreamId|upstreamKeyId|keyId)\)/, route);
-  }
-});
-
-test('models key lookup is scoped to both key id and upstream id', () => {
-  const contents = source('src/app/api/upstreams/[id]/models/route.ts');
-  assert.match(contents, /upstreamKey\.findFirst/);
-  assert.match(contents, /where:[\s\S]*?\{\s*id:\s*numericKeyId,\s*upstreamId\s*\}/);
-  assert.doesNotMatch(contents, /upstreamKey\.findUnique/);
 });
 
 test('middleware exposes only exact public endpoints and framework assets', async () => {
@@ -132,18 +110,18 @@ test('middleware exposes only exact public endpoints and framework assets', asyn
 
 test('middleware returns 401 for unauthenticated APIs and a safe login redirect for pages', async () => {
   const apiResponse = await middleware(
-    new NextRequest('https://monitor.example/api/dashboard'),
+    new NextRequest('https://monitor.example/api/accounts'),
   );
   assert.equal(apiResponse.status, 401);
   assert.deepEqual(await apiResponse.json(), { error: '未登录' });
 
   const pageResponse = await middleware(
-    new NextRequest('https://monitor.example/upstreams?view=all'),
+    new NextRequest('https://monitor.example/accounts?window=last24h'),
   );
   assert.equal(pageResponse.status, 307);
   const location = new URL(pageResponse.headers.get('location')!);
   assert.equal(location.pathname, '/login');
-  assert.equal(location.searchParams.get('redirect'), '/upstreams?view=all');
+  assert.equal(location.searchParams.get('redirect'), '/accounts?window=last24h');
 });
 
 test('middleware accepts valid local and admin sessions for pages and APIs', async () => {
@@ -168,7 +146,7 @@ test('middleware accepts valid local and admin sessions for pages and APIs', asy
     ] as const;
 
     for (const [name, value] of cases) {
-      for (const pathname of ['/', '/api/dashboard']) {
+      for (const pathname of ['/', '/api/accounts']) {
         const request = new NextRequest(`https://monitor.example${pathname}`, {
           headers: { cookie: `${name}=${value}` },
         });
@@ -210,14 +188,14 @@ test('csrf rejects unsafe admin-session writes unless origin and token both matc
         { headers: { origin: 'https://monitor.example', 'x-csrf-token': `${session.csrfToken}x` }, label: 'wrong token' },
       ];
       for (const item of rejectionCases) {
-        const response = await middleware(new NextRequest('https://monitor.example/api/dashboard', {
+        const response = await middleware(new NextRequest('https://monitor.example/api/account-alert-rules/1', {
           method,
           headers: { cookie: `rsm_admin_session=${admin}`, ...item.headers },
         }));
         assert.equal(response.status, 403, `${method}: ${item.label}`);
       }
 
-      const response = await middleware(new NextRequest('https://monitor.example/api/dashboard', {
+      const response = await middleware(new NextRequest('https://monitor.example/api/account-alert-rules/1', {
         method,
         headers: {
           cookie: `rsm_admin_session=${admin}`,
@@ -254,20 +232,20 @@ test('csrf leaves safe methods and valid local-session writes unchanged', async 
     const local = await signSessionToken({ userId: 7, username: 'local', sessionVersion: 1 });
 
     for (const method of ['GET', 'HEAD']) {
-      const response = await middleware(new NextRequest('https://monitor.example/api/dashboard', {
+      const response = await middleware(new NextRequest('https://monitor.example/api/accounts', {
         method,
         headers: { cookie: `rsm_admin_session=${admin}` },
       }));
       assert.equal(response.headers.get('x-middleware-next'), '1', method);
     }
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-      const localResponse = await middleware(new NextRequest('https://monitor.example/api/dashboard', {
+      const localResponse = await middleware(new NextRequest('https://monitor.example/api/account-alert-rules/1', {
         method,
         headers: { cookie: `rsm_session=${local}` },
       }));
       assert.equal(localResponse.headers.get('x-middleware-next'), '1', `local ${method}`);
 
-      const fallbackResponse = await middleware(new NextRequest('https://monitor.example/api/dashboard', {
+      const fallbackResponse = await middleware(new NextRequest('https://monitor.example/api/account-alert-rules/1', {
         method,
         headers: { cookie: `rsm_admin_session=invalid; rsm_session=${local}` },
       }));

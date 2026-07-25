@@ -39,3 +39,28 @@ test('full account sync retires missing accounts without deleting history and is
   assert.match(JSON.stringify(retirement), /RETIRED/);
   assert.deepEqual(((retirement.where as { sourceAccountId: { notIn: string[] } }).sourceAccountId.notIn), ['active-1', 'dirty-rate']);
 });
+
+test('first import of an inactive account sets retiredAt and a write failure closes the run as FAILED', async () => {
+  const runUpdates: Array<Record<string, unknown>> = [];
+  let created: Record<string, unknown> | undefined;
+  const monitor = {
+    accountSyncRun: {
+      create: async () => ({ id: 10 }),
+      update: async (args: Record<string, unknown>) => { runUpdates.push(args); },
+    },
+    sub2ApiAccount: {
+      upsert: async (args: Record<string, unknown>) => { created = args; throw new Error('monitor write failed'); },
+      updateMany: async () => ({ count: 0 }),
+    },
+  };
+  const read = {
+    $transaction: async <T>(operation: (tx: unknown) => Promise<T>) => operation(read),
+    $executeRawUnsafe: async () => 0,
+    $queryRawUnsafe: async () => [{ source_account_id: 'inactive-1', name: 'Inactive', remote_status: 'error' }],
+    $disconnect: async () => {},
+  };
+
+  await assert.rejects(() => syncSub2ApiAccounts(read as never, monitor as never), /monitor write failed/);
+  assert.ok((created?.create as { retiredAt?: Date }).retiredAt instanceof Date);
+  assert.equal(runUpdates.at(-1)?.data && (runUpdates.at(-1)!.data as { status?: string }).status, 'FAILED');
+});

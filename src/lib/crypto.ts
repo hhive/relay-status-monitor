@@ -3,7 +3,7 @@ import { resolveApplicationSecrets } from '@/lib/auth-config';
 
 /**
  * AES-256-GCM 加密工具
- * 用于安全存储上游 API Key
+ * 用于安全存储通知渠道配置
  * 密钥派生自 APP_ENCRYPTION_KEY（scrypt）
  */
 

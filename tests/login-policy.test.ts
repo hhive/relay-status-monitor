@@ -68,8 +68,8 @@ test('password change rotates the session version and signs the replacement cook
   assert.doesNotMatch(password, /修改失败:\s*['"]?\s*\+/);
 });
 
-test('seed paths enforce the same password policy and invalidate old sessions', () => {
-  for (const seed of ['prisma/seed.ts', 'prisma/seed-demo.ts']) {
+test('seed enforces the same password policy and invalidates old sessions', () => {
+  for (const seed of ['prisma/seed.ts']) {
     const contents = source(seed);
     assert.match(contents, /assertPasswordPolicy\(/, seed);
     assert.match(contents, /sessionVersion:[\s\S]*?\{\s*increment:\s*1\s*\}/, seed);

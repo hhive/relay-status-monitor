@@ -62,16 +62,11 @@ export async function syncSub2ApiAccounts(
 ): Promise<{ readCount: number; ignoredCount: number }> {
   const startedAt = new Date();
   const run = await monitorClient.accountSyncRun.create({ data: { type: 'ACCOUNT', status: 'RUNNING', startedAt } });
-  let rows: AccountProjection[];
   try {
-    rows = await queryAccountRows<AccountProjection>(readClient);
-  } catch (error) {
-    await monitorClient.accountSyncRun.update({ where: { id: run.id }, data: { status: 'FAILED', finishedAt: new Date(), errorMessage: 'Sub2API account query failed' } });
-    throw error;
-  }
-  let ignoredCount = 0;
-  const seenAccountIds: string[] = [];
-  for (const row of rows) {
+    const rows = await queryAccountRows<AccountProjection>(readClient);
+    let ignoredCount = 0;
+    const seenAccountIds: string[] = [];
+    for (const row of rows) {
     if (row.source_account_id) seenAccountIds.push(row.source_account_id);
     if (!isValidProjection(row)) { ignoredCount += 1; continue; }
     const state = projectSyncState({ status: row.remote_status, schedulable: row.schedulable }, true);
@@ -108,22 +103,30 @@ export async function syncSub2ApiAccounts(
       create: {
         sourceAccountId: row.source_account_id,
         ...projection,
+        retiredAt: state.syncState === 'RETIRED' ? new Date() : null,
       },
       update: {
         ...projection,
         retiredAt: state.syncState === 'RETIRED' ? new Date() : null,
       },
     });
-  }
-  await monitorClient.sub2ApiAccount.updateMany({
+    }
+    await monitorClient.sub2ApiAccount.updateMany({
     where: {
       syncState: 'ACTIVE',
       ...(seenAccountIds.length > 0 ? { sourceAccountId: { notIn: seenAccountIds } } : {}),
     },
     data: { syncState: 'RETIRED', retiredAt: new Date(), lastSyncedAt: new Date() },
-  });
-  await monitorClient.accountSyncRun.update({ where: { id: run.id }, data: { status: 'SUCCEEDED', finishedAt: new Date(), readCount: rows.length, ignoredCount } });
-  return { readCount: rows.length, ignoredCount };
+    });
+    await monitorClient.accountSyncRun.update({ where: { id: run.id }, data: { status: 'SUCCEEDED', finishedAt: new Date(), readCount: rows.length, ignoredCount } });
+    return { readCount: rows.length, ignoredCount };
+  } catch (error) {
+    await monitorClient.accountSyncRun.update({
+      where: { id: run.id },
+      data: { status: 'FAILED', finishedAt: new Date(), errorMessage: 'Sub2API account synchronization failed' },
+    }).catch(() => undefined);
+    throw error;
+  }
 }
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '../db';

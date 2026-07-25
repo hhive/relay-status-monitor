@@ -3,7 +3,7 @@ import {
   histogramP95,
   isEligibleProviderError,
   providerErrorKey,
-  snapshotBillingMicroUsd,
+  snapshotBillingMicroUsdExact,
   type LatencyHistogram,
 } from './metrics';
 
@@ -41,8 +41,8 @@ export interface MinuteAggregate {
   inputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
-  userBilledMicroUsd: number;
-  accountBilledMicroUsd: number;
+  userBilledMicroUsd: bigint;
+  accountBilledMicroUsd: bigint;
   errorStatusCounts: Record<string, number>;
   errorPhaseCounts: Record<string, number>;
 }
@@ -70,8 +70,8 @@ export function aggregateMinute(input: { usages: UsageEvent[]; errors: ErrorEven
     inputTokens: 0,
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
-    userBilledMicroUsd: 0,
-    accountBilledMicroUsd: 0,
+    userBilledMicroUsd: BigInt(0),
+    accountBilledMicroUsd: BigInt(0),
     errorStatusCounts: {},
     errorPhaseCounts: {},
   };
@@ -87,8 +87,8 @@ export function aggregateMinute(input: { usages: UsageEvent[]; errors: ErrorEven
     result.inputTokens += usage.inputTokens;
     result.cacheReadTokens += usage.cacheReadTokens;
     result.cacheCreationTokens += usage.cacheCreationTokens;
-    result.userBilledMicroUsd += Number(decimalToMicroUsd(usage.actualCost));
-    result.accountBilledMicroUsd += snapshotBillingMicroUsd({
+    result.userBilledMicroUsd += decimalToMicroUsd(usage.actualCost);
+    result.accountBilledMicroUsd += snapshotBillingMicroUsdExact({
       accountStatsCost: usage.accountStatsCost,
       totalCost: usage.totalCost,
       rateMultiplier: usage.accountRateMultiplier,

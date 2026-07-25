@@ -30,9 +30,23 @@ test('minute aggregation attributes provider errors per account and deduplicates
   assert.equal(result.successCount, 2);
   assert.equal(result.upstreamErrorCount, 2);
   assert.equal(result.eligibleCount, 4);
-  assert.equal(result.userBilledMicroUsd, 300000);
-  assert.equal(result.accountBilledMicroUsd, 410000);
+  assert.equal(result.userBilledMicroUsd, BigInt(300000));
+  assert.equal(result.accountBilledMicroUsd, BigInt(410000));
   assert.equal(result.cacheReadTokens, 5);
   assert.equal(result.durationHistogram['100'], 1);
   assert.equal(result.firstTokenHistogram['25'], 1);
+});
+
+test('minute billing aggregation keeps Decimal precision above Number safe integer range', () => {
+  const result = aggregateMinute({
+    usages: [{
+      accountId: 'a', requestId: 'large', durationMs: null, firstTokenMs: null,
+      inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+      actualCost: '9007199254.740991', totalCost: '9007199254.740991',
+      accountStatsCost: null, accountRateMultiplier: '1',
+    }],
+    errors: [],
+  });
+  assert.equal(result.userBilledMicroUsd, BigInt('9007199254740991'));
+  assert.equal(result.accountBilledMicroUsd, BigInt('9007199254740991'));
 });

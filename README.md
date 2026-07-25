@@ -1,65 +1,29 @@
 # Relay Status Monitor
 
-一个面向 AI API 中转站的自托管状态监控面板。当前部署只允许访问本机 `http://127.0.0.1:8080` 的 SUB2API，上游按 Key/分组采集余额、延迟、可用率和模型测速数据，并通过告警规则与飞书 Webhook 发送异常通知。
+一个面向 Sub2API 账号真实流量的自托管可观测面板。服务通过只读数据库连接同步账号与请求指标，提供统一窗口、覆盖完整性、告警事件和飞书 Webhook 通知。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/yigehaozi/relay-status-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/yigehaozi/relay-status-monitor/actions/workflows/ci.yml)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black.svg)](https://nextjs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-required-336791.svg)](https://www.postgresql.org/)
 
-> 仓库只包含程序源码、公开文档和合成演示数据，不包含生产数据库、真实上游凭证、运行日志或内部开发记录。
-
-## 界面预览
-
-所有预览均使用合成演示数据，不对应真实服务、余额或账号。
-
-### 桌面端
-
-[![桌面端登录页](docs/screenshots/desktop/login.png)](docs/screenshots/desktop/login.png)
-
-[![桌面端总览页](docs/screenshots/desktop/dashboard.png)](docs/screenshots/desktop/dashboard.png)
-
-[![桌面端上游管理页](docs/screenshots/desktop/upstreams.png)](docs/screenshots/desktop/upstreams.png)
-
-[![桌面端上游详情页](docs/screenshots/desktop/upstream-detail.png)](docs/screenshots/desktop/upstream-detail.png)
-
-[![桌面端告警事件页](docs/screenshots/desktop/incidents.png)](docs/screenshots/desktop/incidents.png)
-
-[![桌面端设置页](docs/screenshots/desktop/settings.png)](docs/screenshots/desktop/settings.png)
-
-### 手机端
-
-<p align="center"><a href="docs/screenshots/mobile/login.png"><img src="docs/screenshots/mobile/login.png" alt="手机端登录页" width="390"></a></p>
-<p align="center"><a href="docs/screenshots/mobile/dashboard.png"><img src="docs/screenshots/mobile/dashboard.png" alt="手机端总览页" width="390"></a></p>
-<p align="center"><a href="docs/screenshots/mobile/upstreams.png"><img src="docs/screenshots/mobile/upstreams.png" alt="手机端上游管理页" width="390"></a></p>
-<p align="center"><a href="docs/screenshots/mobile/upstream-detail.png"><img src="docs/screenshots/mobile/upstream-detail.png" alt="手机端上游详情页" width="390"></a></p>
-<p align="center"><a href="docs/screenshots/mobile/incidents.png"><img src="docs/screenshots/mobile/incidents.png" alt="手机端告警事件页" width="390"></a></p>
-<p align="center"><a href="docs/screenshots/mobile/settings.png"><img src="docs/screenshots/mobile/settings.png" alt="手机端设置页" width="390"></a></p>
+> 仓库只包含程序源码和公开文档，不包含生产数据库、真实凭证、运行日志或内部开发记录。
 
 ## 主要能力
 
-- 多 Key 管理：可为受信任的 SUB2API 上游配置多个独立 Key/分组。
-- 指标采集：记录余额、接口延迟、模型测试延迟、首 Token 延迟和流式 TPS。
-- 轻重分层：日常刷新只查询余额和模型列表；重量采集会发送少量模型生成请求。
-- 状态聚合：分别维护 Key 状态和上游汇总状态，支持在线、降级、离线和未知状态。
-- 告警管理：支持余额、延迟、连续失败和最近一小时可用率规则，并提供冷却与自动恢复。
+- 账号总览：支持今天、近 1 小时和近 24 小时窗口，以及可调度状态、平台、分组和搜索筛选。
+- 真实流量指标：聚合可用率、错误率、总延迟、首 Token 延迟、缓存命中和双口径计费。
+- 覆盖完整性：区分完整、账号上线前缺失、采集延迟和中间缺口，不把缺失数据当作零值。
+- 账号详情：展示趋势、分钟明细、调度状态和逐账号倍率告警配置。
+- 告警管理：提供七类固定账号规则、事件筛选、冷却和自动恢复。
 - 通知渠道：当前支持飞书自定义机器人 Webhook，可选签名密钥。
 - 响应式界面：桌面端与手机端均可使用，并支持深色/浅色主题。
-- 本地认证：使用用户名和密码登录，登录会话保存在 HttpOnly Cookie 中。
-
-## 支持的上游
-
-| 类型 | 余额 | 延迟/模型列表 | 模型与流式测速 | 远端 Key 元数据 | 所需凭证 |
-| --- | --- | --- | --- | --- | --- |
-| `SUB2API` | `GET /v1/usage` | `GET /v1/models` | `POST /v1/chat/completions` | 仅使用余额响应中可用的分组字段 | API Key |
-| `NEW_API` | 未启用 | 未启用 | 未启用 | 不发起请求 | 不接受新配置 |
-
-SUB2API 地址必须精确为 `http://127.0.0.1:8080`。添加上游后，请先使用“测试”或“刷新”确认兼容性。重量测试会产生真实模型请求并消耗少量额度。
+- 认证：支持本地管理员会话与 Sub2API 管理员启动票据。
 
 ## 技术栈
 
-- Next.js 14、React 18、TypeScript
-- Tailwind CSS、shadcn/ui、TanStack Table、Recharts
+- Next.js 15、React 18、TypeScript
+- Tailwind CSS、shadcn/ui、Recharts
 - Prisma 6、PostgreSQL
 - bcrypt、JWT、AES-256-GCM
 
@@ -92,6 +56,7 @@ cp .env.example .env
 
 ```dotenv
 DATABASE_URL="postgresql://monitor_user:strong_password@127.0.0.1:5432/relay_monitor?schema=public"
+SUB2API_DATABASE_URL="postgresql://readonly_user:strong_password@127.0.0.1:5432/sub2api?schema=public"
 APP_ENCRYPTION_KEY="replace-with-a-long-random-secret"
 SESSION_SECRET="replace-with-a-different-long-random-secret"
 CRON_SECRET="replace-with-an-independent-random-secret"
@@ -108,12 +73,12 @@ openssl rand -base64 48
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
 | `DATABASE_URL` | 是 | PostgreSQL 连接字符串。生产环境建议使用独立数据库和最小权限账号。 |
-| `APP_ENCRYPTION_KEY` | 是 | 仅用于加密上游凭证；应用运行和 demo seed 均需要，至少 32 字节。 |
+| `SUB2API_DATABASE_URL` | 是 | Sub2API PostgreSQL 只读连接串，仅用于账号与真实流量采集。 |
+| `APP_ENCRYPTION_KEY` | 是 | 仅用于加密通知渠道配置，至少 32 字节。 |
 | `SESSION_SECRET` | 是 | 仅用于签发登录会话；至少 32 字节且不得与 `APP_ENCRYPTION_KEY` 相同。 |
 | `CRON_SECRET` | 建议 | 定时采集接口的 Bearer 密钥，仅从服务端环境变量读取。设置 API 和数据库不保存该值。 |
 | `NEXT_PUBLIC_APP_NAME` | 否 | 预留的客户端应用名称配置。 |
 | `ADMIN_PASSWORD` | seed 必填 | 基础 seed 为 `admin` 用户设置的密码。缺失或为空时 seed 会拒绝运行。 |
-| `DEMO_ADMIN_PASSWORD` | demo seed 必填 | 演示用户 `demo` 的密码。 |
 
 不要把 `.env`、数据库导出、API Key、Access Token、Webhook 地址或签名密钥提交到版本库。
 
@@ -135,24 +100,10 @@ ADMIN_PASSWORD='replace-with-a-strong-password' pnpm db:seed
 基础 seed 会创建：
 
 - 管理员 `admin`，密码来自本次执行的 `ADMIN_PASSWORD`；
-- 默认告警规则；
+- 默认账号告警规则；
 - 默认采集参数。
 
-基础 seed 会幂等更新 `admin` 的密码，不会写入上游、API Key、Access Token 或指标数据。
-
-需要预览完整界面时，可以在独立的演示数据库中写入合成数据：
-
-```bash
-DATABASE_URL='postgresql://demo_user:strong_password@127.0.0.1:5432/relay_monitor_demo?schema=public' \
-APP_ENCRYPTION_KEY='replace-with-a-demo-only-encryption-key' \
-SESSION_SECRET='replace-with-a-different-demo-session-key' \
-DEMO_ADMIN_PASSWORD='replace-with-a-demo-password' \
-pnpm db:seed:demo
-```
-
-演示 seed 会创建 `demo` 用户，以及 12 个虚构上游、20 个分组、1120 条 7 天指标、7 条告警、规则和设置。为完整展示凭证状态，它还会生成 19 个合成 API Key 和 9 个合成 Access Token，并使用本次显式传入的 `APP_ENCRYPTION_KEY` 加密；这些值只以 `sk-demo-*` / `access-demo-*` 形式存在，不连接任何真实服务。再次执行时，只会重建固定的演示上游数据，但会更新同名演示规则、渠道和设置。
-
-演示 seed 不会读取项目根目录的 `.env`，`DATABASE_URL`、`APP_ENCRYPTION_KEY`、`SESSION_SECRET` 和 `DEMO_ADMIN_PASSWORD` 必须通过当前进程环境显式提供。它只应连接到本地或专用演示数据库，避免把演示设置混入生产环境。登录用户名固定为 `demo`，密码是执行命令时提供的 `DEMO_ADMIN_PASSWORD`。演示告警渠道配置会以 AES-256-GCM 密文写入。
+基础 seed 会幂等更新 `admin` 的密码，不会写入账号、指标或告警事件数据。
 
 > 当前仓库以 `prisma db push` 作为首次部署方式。若在生产环境长期维护 schema，请在自己的发布流程中采用 Prisma Migration，并在迁移前备份数据库。
 
@@ -168,25 +119,7 @@ pnpm dev
 pnpm exec next dev -p 3100
 ```
 
-登录后建议按以下顺序配置：
-
-1. 在“设置 > 修改密码”中定期更新管理员密码。
-2. 在“上游管理”中添加上游。
-3. 为上游添加 Key/分组并填写所需凭证。
-4. 执行一次轻量刷新或完整测试。
-5. 配置告警规则、飞书 Webhook 和定时采集密钥。
-
-## 凭证配置
-
-### SUB2API
-
-每个分组至少需要一个 API Key。系统使用它查询 `/v1/usage` 和 `/v1/models`，重量测试还会请求 `/v1/chat/completions`。
-
-普通 API Key 不一定有权限查询分组管理接口。因此，系统只会保存上游在用量响应中明确返回的分组信息，不会猜测名称、说明或倍率。
-
-### New API
-
-当前部署未配置 NEW_API 目标 allowlist，因此创建、采集、模型查询和元数据查询均 fail-closed，不会向 NEW_API 地址发起请求，也不会把 API Key 放入 URL 查询参数。
+登录后可在设置页管理账号告警规则、飞书通知渠道和本地管理员密码。
 
 ## 定时采集
 
@@ -203,11 +136,7 @@ Authorization: Bearer <CRON_SECRET>
 * * * * * curl -fsS -H 'Authorization: Bearer replace-with-your-cron-secret' 'https://monitor.example/api/cron/collect' > /dev/null
 ```
 
-每次触发都会采集所有已启用上游中的已启用 Key：
-
-- 轻量模式：余额 + `/v1/models` 延迟，不发送模型生成请求。
-- 重量模式：在轻量模式基础上执行非流式模型测试和流式 TPS 测试，会消耗少量额度。
-- 重量采集周期由设置页中的“重量采集间隔”决定。
+每次触发会同步账号投影、重算最近完整分钟的真实流量指标并评估账号告警。采集只读取数据库，不发送模型生成请求。
 
 设置页只显示服务端是否已配置 `CRON_SECRET`，不会读取、编辑或展示该值。部署时请在服务器环境中设置密钥，并在受控的 crontab 配置中引用同一个值。
 
@@ -225,7 +154,7 @@ pnpm start
 - 为 PostgreSQL 配置定期加密备份。
 - 将 `.env` 交给部署平台的 Secret 管理能力，不写入镜像或仓库。
 - 为外部 cron 设置超时、失败日志和重试策略，避免无界并发。
-- 修改 `APP_ENCRYPTION_KEY` 前先规划凭证迁移；直接更换会导致现有加密凭证无法解密。
+- 修改 `APP_ENCRYPTION_KEY` 前先规划通知渠道配置迁移；直接更换会导致现有加密配置无法解密。
 - 更换 `SESSION_SECRET` 会使所有已有会话失效。
 
 ## 常用命令
@@ -239,21 +168,8 @@ pnpm start
 | `pnpm db:generate` | 生成 Prisma Client |
 | `pnpm db:push` | 将 schema 同步到数据库 |
 | `ADMIN_PASSWORD='...' pnpm db:seed` | 写入基础数据并设置 `admin` 密码 |
-| `DATABASE_URL='...' APP_ENCRYPTION_KEY='...' SESSION_SECRET='...' DEMO_ADMIN_PASSWORD='...' pnpm db:seed:demo` | 向显式指定的独立数据库写入合成演示数据 |
 | `pnpm db:migrate:alert-channels` | 将旧版飞书明文配置一次性迁移为版本化密文，可幂等重复执行 |
 | `pnpm db:studio` | 打开 Prisma Studio |
-
-## 扩展适配器
-
-适配器位于 `src/lib/adapters/`。新增上游类型时需要：
-
-1. 在 Prisma 的 `UpstreamType` 中增加类型并更新数据库。
-2. 实现 `UpstreamAdapter` 的余额、延迟、模型列表、模型测试和流式测试方法。
-3. 如远端支持，再实现可选的 `fetchKeyMetadata`。
-4. 在适配器注册表中注册新实现。
-5. 在上游表单中增加新类型选项，并验证凭证字段与错误提示。
-
-适配器必须使用统一的超时控制，并返回脱敏错误；任何响应都不得把 API Key 或 Access Token 写入日志、指标或客户端 DTO。
 
 ## 故障排查
 
@@ -269,37 +185,24 @@ pnpm start
 - 生产环境必须通过 HTTPS 访问，否则安全 Cookie 可能无法正常保存。
 - 更换 `SESSION_SECRET` 或修改密码后，旧会话会失效，需要重新登录。
 
-### 已保存的上游凭证不可用
-
-- 确认当前 `APP_ENCRYPTION_KEY` 与写入凭证时相同。
-- 确认上游地址精确为 `http://127.0.0.1:8080`，且服务可从本机访问。
-- 使用“刷新”执行轻量检查；使用“测试”执行完整模型检查。
-
 ### CRON 返回 401
 
 - 检查 Authorization Header 是否严格为 `Bearer <secret>`。
 - 确认运行服务的环境变量中配置了 `CRON_SECRET`；数据库中的旧 `cron_secret` 不会被读取。
 - 避免在代理层移除 `Authorization` Header。
 
-### 重量采集消耗过多额度
-
-- 增大“重量采集间隔”。
-- 为每个 Key 选择成本更低、响应更稳定的测试模型。
-- 日常人工检查优先使用轻量“刷新”，仅在需要验证生成能力时执行“测试”。
-
 ### 飞书没有收到告警
 
 - 确认告警渠道和对应规则均已启用。
 - 检查 Webhook 地址、可选签名密钥和机器人安全策略。
-- 告警存在冷却窗口；同一 Key、同一类型在冷却期内不会重复发送。
+- 告警存在冷却窗口；同一账号、同一规则在冷却期内不会重复发送。
 
 ## 安全说明
 
-- 上游 API Key、Access Token 和飞书 Webhook 配置使用 AES-256-GCM 加密后写入数据库。
+- 飞书 Webhook 与可选签名密钥使用 AES-256-GCM 加密后写入数据库。
 - `APP_ENCRYPTION_KEY` 只应通过受控环境变量提供，不能与数据库备份存放在同一公开位置。
 - `SESSION_SECRET` 必须与应用加密密钥分离，并只通过受控环境变量提供。
 - 登录密码使用 bcrypt 哈希且最少 14 个字符；会话使用 7 天有效期的 HttpOnly、SameSite Cookie。
-- 前端 API 只返回 `hasApiKey`、`hasAccessToken` 等状态，不返回凭证明文或密文。
 - CRON 接口不依赖登录 Cookie，必须使用独立、高强度的 `CRON_SECRET`。
 - 飞书 Webhook 配置为 write-only；API 只返回是否已配置，不返回明文、密文或末尾片段。
 - 对外部署前请使用高强度管理员密码，并启用 HTTPS、数据库备份和网络访问控制。
