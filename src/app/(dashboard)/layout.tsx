@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Activity, LayoutDashboard, Server, Bell, Settings, LogOut, Menu, Sun, Moon } from 'lucide-react';
+import { Activity, LayoutDashboard, Server, Bell, Settings, LogOut, Menu, Sun, Moon, ChartNoAxesCombined } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/components/theme-provider';
 import { cn } from '@/lib/utils';
@@ -12,6 +12,7 @@ import { apiFetch, resetApiFetchCache } from '@/lib/api-fetch';
 const NAV_ITEMS = [
   { href: '/', label: '总览', icon: LayoutDashboard },
   { href: '/upstreams', label: '上游管理', icon: Server },
+  { href: '/accounts', label: '账号流量', icon: ChartNoAxesCombined },
   { href: '/incidents', label: '告警事件', icon: Bell },
   { href: '/settings', label: '设置', icon: Settings },
 ];

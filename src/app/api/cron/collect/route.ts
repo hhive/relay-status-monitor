@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { runCollectCycle } from '@/lib/collector';
+import { runAccountObservabilityCycle } from '@/lib/account-observability/collector';
 
 /**
  * 定时采集入口
@@ -21,6 +22,7 @@ export async function GET(request: Request) {
     }
 
     const result = await runCollectCycle();
+    const accountObservability = await runAccountObservabilityCycle();
     const elapsed = Date.now() - start;
     return NextResponse.json({
       ok: true,
@@ -28,6 +30,7 @@ export async function GET(request: Request) {
       mode: result.mode,
       elapsedMs: elapsed,
       time: new Date().toISOString(),
+      accountObservability,
     });
   } catch {
     return NextResponse.json(

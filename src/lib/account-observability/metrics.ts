@@ -42,22 +42,22 @@ export function cacheHitRate(tokens: TokenUsage): number | null {
   return denominator === 0 ? null : tokens.cacheReadTokens / denominator;
 }
 
-function decimalToMicro(value: string | number | null | undefined): bigint {
+export function decimalToMicroUsd(value: string | number | null | undefined): bigint {
   const text = String(value ?? '0').trim();
-  if (!/^-?\d+(?:\.\d+)?$/.test(text)) return 0n;
+  if (!/^-?\d+(?:\.\d+)?$/.test(text)) return BigInt(0);
   const negative = text.startsWith('-');
   const unsigned = negative ? text.slice(1) : text;
   const [whole, fraction = ''] = unsigned.split('.');
   const padded = `${fraction}000000`;
-  const micro = BigInt(whole) * 1_000_000n + BigInt(padded.slice(0, 6));
-  const rounded = fraction.length > 6 && Number(padded[6]) >= 5 ? micro + 1n : micro;
+  const micro = BigInt(whole) * BigInt(1000000) + BigInt(padded.slice(0, 6));
+  const rounded = fraction.length > 6 && Number(padded[6]) >= 5 ? micro + BigInt(1) : micro;
   return negative ? -rounded : rounded;
 }
 
 export function snapshotBillingMicroUsd(snapshot: BillingSnapshot): number {
-  const base = decimalToMicro(snapshot.accountStatsCost ?? snapshot.totalCost);
-  const multiplier = decimalToMicro(snapshot.rateMultiplier ?? 1);
-  const result = (base * multiplier + 500_000n) / 1_000_000n;
+  const base = decimalToMicroUsd(snapshot.accountStatsCost ?? snapshot.totalCost);
+  const multiplier = decimalToMicroUsd(snapshot.rateMultiplier ?? 1);
+  const result = (base * multiplier + BigInt(500000)) / BigInt(1000000);
   return Number(result);
 }
 
