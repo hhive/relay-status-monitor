@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { toMeResponseBody } from '../src/app/api/auth/me/route';
+import { toMeResponseBody } from '../src/lib/auth';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const apiRoot = path.join(projectRoot, 'src/app/api');

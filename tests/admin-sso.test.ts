@@ -10,7 +10,7 @@ import {
   validateAdminClaims,
   type AdminClaims,
 } from '../src/lib/admin-sso';
-import { createAdminLaunchHandler } from '../src/app/api/sub2api/admin-launch/route';
+import { createAdminLaunchHandler } from '../src/lib/admin-launch';
 import { attachAdminSession, createAdminSession } from '../src/lib/admin-session-token';
 
 const strongSecret = 'admin-exchange-secret-for-tests-only';

@@ -59,6 +59,7 @@
   },
   "pnpm": {
     "overrides": {
+      "postcss": "8.5.18",
       "sharp": "0.35.3"
     },
     "onlyBuiltDependencies": [

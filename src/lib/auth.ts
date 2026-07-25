@@ -29,6 +29,24 @@ export interface LocalApiSession extends SessionPayload {
 
 export type ApiSession = AdminApiSession | LocalApiSession;
 
+export function toMeResponseBody(session: ApiSession) {
+  if (session.source === 'sub2api') {
+    return {
+      ok: true,
+      username: session.username,
+      userId: session.userId,
+      source: session.source,
+      csrfToken: session.csrfToken,
+    };
+  }
+  return {
+    ok: true,
+    username: session.username,
+    userId: session.userId,
+    source: session.source,
+  };
+}
+
 type LocalSessionUser = {
   id: number;
   username: string;
