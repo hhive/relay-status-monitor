@@ -14,6 +14,7 @@ const CLAIM_KEYS = [
   'user_id',
   'username',
 ] as const;
+const EXCHANGE_RESPONSE_KEYS = ['code', 'data', 'message'] as const;
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -45,6 +46,23 @@ function invalidConfiguration(): never {
 
 function invalidClaims(): never {
   throw new Error('Admin SSO claims invalid');
+}
+
+function extractExchangeClaims(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Admin SSO exchange failed');
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== EXCHANGE_RESPONSE_KEYS.length ||
+    keys.some((key, index) => key !== EXCHANGE_RESPONSE_KEYS[index]) ||
+    record.code !== 0 ||
+    record.message !== 'success'
+  ) {
+    throw new Error('Admin SSO exchange failed');
+  }
+  return record.data;
 }
 
 function isAllowedBaseUrl(url: URL): boolean {
@@ -152,5 +170,5 @@ export async function exchangeAdminLaunchTicket(
     throw new Error('Admin SSO exchange failed');
   }
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000);
-  return validateAdminClaims(body, nowSeconds);
+  return validateAdminClaims(extractExchangeClaims(body), nowSeconds);
 }

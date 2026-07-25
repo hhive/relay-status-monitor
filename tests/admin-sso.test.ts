@@ -86,7 +86,7 @@ test('admin sso exchange sends only the launch token and fixed secret header', a
   const fetchImpl: typeof fetch = async (input, init) => {
     capturedUrl = String(input);
     capturedInit = init;
-    return Response.json(validClaims);
+    return Response.json({ code: 0, message: 'success', data: validClaims });
   };
 
   const claims = await exchangeAdminLaunchTicket('one-time-ticket', {
@@ -108,6 +108,26 @@ test('admin sso exchange sends only the launch token and fixed secret header', a
   );
   assert.ok(capturedInit?.signal instanceof AbortSignal);
   assert.equal(ADMIN_EXCHANGE_TIMEOUT_MS, 10_000);
+});
+
+test('admin sso exchange requires the exact Sub2API success envelope', async () => {
+  const responses: unknown[] = [
+    validClaims,
+    { code: 401, message: 'denied', data: validClaims },
+    { code: 0, message: 'success', data: validClaims, reason: '' },
+    { code: 0, message: 'success' },
+  ];
+
+  for (const body of responses) {
+    await assert.rejects(
+      exchangeAdminLaunchTicket('one-time-ticket', {
+        environment: validEnvironment,
+        fetchImpl: async () => Response.json(body),
+        nowSeconds,
+      }),
+      /exchange|claims/i,
+    );
+  }
 });
 
 test('admin sso accepts only exact, current administrator claims', () => {
