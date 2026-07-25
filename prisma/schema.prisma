@@ -40,6 +40,23 @@ enum Severity {
   CRITICAL
 }
 
+enum Sub2ApiAccountSyncState {
+  ACTIVE
+  RETIRED
+}
+
+enum AccountSyncRunType {
+  ACCOUNT
+  METRIC
+  REBUILD
+}
+
+enum AccountSyncRunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
 // ============ 核心表 ============
 
 /// 上游中转站（站点级，保留元信息 + 汇总状态）
@@ -111,6 +128,91 @@ model UpstreamKey {
 
   @@unique([upstreamId, group])
   @@index([upstreamId, enabled, status])
+}
+
+/// Sub2API 账号只读投影，独立于手工探针 UpstreamKey
+model Sub2ApiAccount {
+  id                         Int                    @id @default(autoincrement())
+  sourceAccountId            String                 @unique
+  name                       String
+  platform                   String?
+  type                       String?
+  remoteStatus               String?
+  schedulable                Boolean?
+  rateLimitedAt              DateTime?
+  rateLimitResetAt           DateTime?
+  overloadUntil              DateTime?
+  tempUnschedulableUntil     DateTime?
+  tempUnschedulableReason    String?                @db.Text
+  groupIds                   Json?
+  groupProjection            Json?
+  probeEnabled               Boolean                @default(false)
+  probeStatus                String?
+  probeFreshAt               DateTime?
+  probeResolvedRateMultiplier Decimal?               @db.Decimal(20, 8)
+  probePeakRateMultiplier    Decimal?               @db.Decimal(20, 8)
+  probeLastSuccessAt         DateTime?
+  syncState                  Sub2ApiAccountSyncState @default(ACTIVE)
+  remoteUpdatedAt            DateTime?
+  lastSyncedAt               DateTime?
+  retiredAt                  DateTime?
+  createdAt                  DateTime               @default(now())
+  updatedAt                  DateTime               @updatedAt
+
+  metricMinutes              AccountMetricMinute[]
+  syncRuns                   AccountSyncRun[]
+
+  @@index([syncState, remoteStatus])
+  @@index([lastSyncedAt])
+}
+
+/// 每个账号每个 UTC 分钟的可重算聚合桶
+model AccountMetricMinute {
+  id                    Int             @id @default(autoincrement())
+  accountId             Int
+  account               Sub2ApiAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  bucketStart           DateTime
+  successCount          Int             @default(0)
+  upstreamErrorCount    Int             @default(0)
+  eligibleCount         Int             @default(0)
+  durationCount         Int             @default(0)
+  durationSumMs         BigInt          @default(0)
+  durationHistogram     Json?
+  firstTokenHistogram   Json?
+  inputTokens           BigInt          @default(0)
+  cacheReadTokens       BigInt          @default(0)
+  cacheCreationTokens   BigInt          @default(0)
+  userBilledUsd         Decimal         @default(0) @db.Decimal(24, 6)
+  accountBilledUsd      Decimal         @default(0) @db.Decimal(24, 6)
+  errorStatusCounts     Json?
+  errorPhaseCounts      Json?
+  sourceMaxUsageId      String?
+  sourceMaxErrorId      String?
+  updatedAt             DateTime        @updatedAt
+
+  @@unique([accountId, bucketStart])
+  @@index([bucketStart])
+}
+
+/// 同步/采集运行记录，保存脱敏状态和窗口统计
+model AccountSyncRun {
+  id              Int                 @id @default(autoincrement())
+  accountId       Int?
+  account         Sub2ApiAccount?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  type            AccountSyncRunType
+  status          AccountSyncRunStatus @default(RUNNING)
+  startedAt       DateTime            @default(now())
+  finishedAt      DateTime?
+  scanStart       DateTime?
+  scanEnd         DateTime?
+  readCount       Int                 @default(0)
+  bucketWriteCount Int                @default(0)
+  ignoredCount    Int                 @default(0)
+  durationMs      Int?
+  errorMessage    String?             @db.Text
+
+  @@index([type, startedAt])
+  @@index([status, startedAt])
 }
 
 /// 每次采集的指标快照（时间序列）
