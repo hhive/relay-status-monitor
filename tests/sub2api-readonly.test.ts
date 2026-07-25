@@ -14,6 +14,8 @@ import {
 test('readonly adapter selects only approved projections and never credential or body columns', () => {
   const sql = `${ACCOUNT_PROJECTION_SQL}\n${USAGE_PROJECTION_SQL}\n${ERROR_PROJECTION_SQL}`;
   assert.match(sql, /account_id/);
+  assert.match(USAGE_PROJECTION_SQL, /created_at >= \$1::timestamptz AND created_at < \$2::timestamptz/);
+  assert.match(ERROR_PROJECTION_SQL, /created_at >= \$1::timestamptz AND created_at < \$2::timestamptz/);
   assert.match(sql, /duration_ms/);
   assert.match(sql, /first_token_ms/);
   assert.match(sql, /actual_cost/);

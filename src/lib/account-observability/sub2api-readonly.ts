@@ -57,7 +57,7 @@ export const USAGE_PROJECTION_SQL = `
     total_cost,
     account_rate_multiplier
   FROM usage_logs
-  WHERE created_at >= $1 AND created_at < $2
+  WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz
 `;
 
 export const ERROR_PROJECTION_SQL = `
@@ -71,7 +71,7 @@ export const ERROR_PROJECTION_SQL = `
     error_owner,
     status_code
   FROM ops_error_logs
-  WHERE created_at >= $1 AND created_at < $2
+  WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz
 `;
 
 export const CAPABILITY_PROJECTION_SQL = `
