@@ -7,7 +7,7 @@ import { NextRequest } from 'next/server';
 
 import { parseStrictPositiveInteger, safeRedirectPath } from '../src/lib/security';
 import { middleware } from '../src/middleware';
-import { createAdminSession } from '../src/lib/admin-session-token';
+import { createAdminSession, verifyAdminSession } from '../src/lib/admin-session-token';
 import { ADMIN_APP_ID } from '../src/lib/admin-sso';
 import { signSessionToken } from '../src/lib/session-token';
 
@@ -184,6 +184,103 @@ test('middleware accepts valid local and admin sessions for pages and APIs', asy
   }
 });
 
+test('csrf rejects unsafe admin-session writes unless origin and token both match', async () => {
+  const previousSessionSecret = process.env.SESSION_SECRET;
+  const previousEncryptionKey = process.env.APP_ENCRYPTION_KEY;
+  process.env.SESSION_SECRET = 's'.repeat(32);
+  process.env.APP_ENCRYPTION_KEY = 'e'.repeat(32);
+  try {
+    const admin = await createAdminSession({
+      user_id: 19,
+      email: 'owner@example.test',
+      username: 'owner',
+      role: 'admin',
+      app_id: ADMIN_APP_ID,
+      issued_at: 1_800_000_000,
+      expires_at: 1_800_000_060,
+    }, 600);
+    const session = await verifyAdminSession(admin);
+    assert.ok(session);
+
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const rejectionCases: Array<{ headers: Record<string, string>; label: string }> = [
+        { headers: {}, label: 'missing origin' },
+        { headers: { origin: 'https://evil.example', 'x-csrf-token': session.csrfToken }, label: 'wrong origin' },
+        { headers: { origin: 'https://monitor.example' }, label: 'missing token' },
+        { headers: { origin: 'https://monitor.example', 'x-csrf-token': `${session.csrfToken}x` }, label: 'wrong token' },
+      ];
+      for (const item of rejectionCases) {
+        const response = await middleware(new NextRequest('https://monitor.example/api/dashboard', {
+          method,
+          headers: { cookie: `rsm_admin_session=${admin}`, ...item.headers },
+        }));
+        assert.equal(response.status, 403, `${method}: ${item.label}`);
+      }
+
+      const response = await middleware(new NextRequest('https://monitor.example/api/dashboard', {
+        method,
+        headers: {
+          cookie: `rsm_admin_session=${admin}`,
+          origin: 'https://monitor.example',
+          'x-csrf-token': session.csrfToken,
+          'x-forwarded-host': 'evil.example',
+        },
+      }));
+      assert.equal(response.headers.get('x-middleware-next'), '1', method);
+    }
+  } finally {
+    if (previousSessionSecret === undefined) delete process.env.SESSION_SECRET;
+    else process.env.SESSION_SECRET = previousSessionSecret;
+    if (previousEncryptionKey === undefined) delete process.env.APP_ENCRYPTION_KEY;
+    else process.env.APP_ENCRYPTION_KEY = previousEncryptionKey;
+  }
+});
+
+test('csrf leaves safe methods and valid local-session writes unchanged', async () => {
+  const previousSessionSecret = process.env.SESSION_SECRET;
+  const previousEncryptionKey = process.env.APP_ENCRYPTION_KEY;
+  process.env.SESSION_SECRET = 's'.repeat(32);
+  process.env.APP_ENCRYPTION_KEY = 'e'.repeat(32);
+  try {
+    const admin = await createAdminSession({
+      user_id: 19,
+      email: 'owner@example.test',
+      username: 'owner',
+      role: 'admin',
+      app_id: ADMIN_APP_ID,
+      issued_at: 1_800_000_000,
+      expires_at: 1_800_000_060,
+    }, 600);
+    const local = await signSessionToken({ userId: 7, username: 'local', sessionVersion: 1 });
+
+    for (const method of ['GET', 'HEAD']) {
+      const response = await middleware(new NextRequest('https://monitor.example/api/dashboard', {
+        method,
+        headers: { cookie: `rsm_admin_session=${admin}` },
+      }));
+      assert.equal(response.headers.get('x-middleware-next'), '1', method);
+    }
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const localResponse = await middleware(new NextRequest('https://monitor.example/api/dashboard', {
+        method,
+        headers: { cookie: `rsm_session=${local}` },
+      }));
+      assert.equal(localResponse.headers.get('x-middleware-next'), '1', `local ${method}`);
+
+      const fallbackResponse = await middleware(new NextRequest('https://monitor.example/api/dashboard', {
+        method,
+        headers: { cookie: `rsm_admin_session=invalid; rsm_session=${local}` },
+      }));
+      assert.equal(fallbackResponse.headers.get('x-middleware-next'), '1', `fallback ${method}`);
+    }
+  } finally {
+    if (previousSessionSecret === undefined) delete process.env.SESSION_SECRET;
+    else process.env.SESSION_SECRET = previousSessionSecret;
+    if (previousEncryptionKey === undefined) delete process.env.APP_ENCRYPTION_KEY;
+    else process.env.APP_ENCRYPTION_KEY = previousEncryptionKey;
+  }
+});
+
 test('auth endpoints expose the session union safely and keep password local-only', () => {
   const auth = source('src/lib/auth.ts');
   const me = source('src/app/api/auth/me/route.ts');
@@ -202,4 +299,12 @@ test('auth endpoints expose the session union safely and keep password local-onl
   assert.match(password, /requireLocalApiSession/);
   assert.ok(password.indexOf('await requireLocalApiSession()') < password.indexOf('request.json('));
   assert.ok(password.indexOf('await requireLocalApiSession()') < password.indexOf('prisma.$transaction'));
+});
+
+test('admin session account UI disables password changes and points to Sub2API', () => {
+  const settings = source('src/app/(dashboard)/settings/page.tsx');
+  assert.match(settings, /fetch\(['"]\/api\/auth\/me['"]\)/);
+  assert.match(settings, /source\s*===\s*['"]sub2api['"]/);
+  assert.match(settings, /请在 Sub2API 修改管理员凭据/);
+  assert.match(settings, /disabled=\{[^}]*isSub2Api/);
 });

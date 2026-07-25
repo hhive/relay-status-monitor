@@ -45,6 +45,7 @@ import { PageHeader } from '@/components/page-header';
 import { resolveRuleNumberDraft } from '@/lib/rule-number-draft';
 import { buildSettingsUpdatePayload } from '@/lib/settings-form';
 import { toast } from 'sonner';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface AlertRule {
   id: number;
@@ -154,7 +155,7 @@ function RulesTab() {
   async function toggleRule(rule: AlertRule) {
     setUpdatingId(rule.id);
     try {
-      await fetch(`/api/alert-rules/${rule.id}`, {
+      await apiFetch(`/api/alert-rules/${rule.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: !rule.enabled }),
@@ -169,7 +170,7 @@ function RulesTab() {
     setUpdatingId(id);
     try {
       const payload: Record<string, unknown> = { [field]: value };
-      await fetch(`/api/alert-rules/${id}`, {
+      await apiFetch(`/api/alert-rules/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -201,7 +202,7 @@ function RulesTab() {
 
     setUpdatingId(rule.id);
     try {
-      const res = await fetch(`/api/alert-rules/${rule.id}`, {
+      const res = await apiFetch(`/api/alert-rules/${rule.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: resolved.value }),
@@ -365,7 +366,7 @@ function ChannelsTab() {
     if (!webhookUrl) return;
     setSaving(true);
     try {
-      await fetch('/api/alert-channels', {
+      await apiFetch('/api/alert-channels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -393,7 +394,7 @@ function ChannelsTab() {
     if (!ok) return;
     setUpdatingId(id);
     try {
-      await fetch(`/api/alert-channels/${id}`, { method: 'DELETE' });
+      await apiFetch(`/api/alert-channels/${id}`, { method: 'DELETE' });
       await fetchChannels();
     } finally {
       setUpdatingId(null);
@@ -403,7 +404,7 @@ function ChannelsTab() {
   async function toggleChannel(ch: AlertChannel) {
     setUpdatingId(ch.id);
     try {
-      await fetch(`/api/alert-channels/${ch.id}`, {
+      await apiFetch(`/api/alert-channels/${ch.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: !ch.enabled }),
@@ -567,7 +568,7 @@ function SystemTab() {
     setSaving(true);
     try {
       const payload = buildSettingsUpdatePayload(settings);
-      const res = await fetch('/api/settings', {
+      const res = await apiFetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -734,9 +735,18 @@ function PasswordTab() {
   const [confirmPw, setConfirmPw] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSub2Api, setIsSub2Api] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((response) => response.json())
+      .then((session) => setIsSub2Api(session?.source === 'sub2api'))
+      .catch(() => setIsSub2Api(false));
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isSub2Api) return;
     setMsg(null);
     if (newPw !== confirmPw) {
       setMsg({ type: 'error', text: '两次输入的新密码不一致' });
@@ -748,7 +758,7 @@ function PasswordTab() {
     }
     setSaving(true);
     try {
-      const res = await fetch('/api/auth/password', {
+      const res = await apiFetch('/api/auth/password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw }),
@@ -777,7 +787,9 @@ function PasswordTab() {
             <KeyRound className="h-4 w-4" />
             修改登录密码
           </CardTitle>
-          <CardDescription>新密码至少 6 位字符</CardDescription>
+          <CardDescription>
+            {isSub2Api ? '请在 Sub2API 修改管理员凭据' : '新密码至少 6 位字符'}
+          </CardDescription>
         </CardHeader>
         <CardContent className="mx-auto w-full max-w-xl">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -788,6 +800,7 @@ function PasswordTab() {
                 type="password"
                 value={oldPw}
                 onChange={(e) => setOldPw(e.target.value)}
+                disabled={isSub2Api}
                 required
                 autoFocus
               />
@@ -799,6 +812,7 @@ function PasswordTab() {
                 type="password"
                 value={newPw}
                 onChange={(e) => setNewPw(e.target.value)}
+                disabled={isSub2Api}
                 required
               />
             </div>
@@ -809,6 +823,7 @@ function PasswordTab() {
                 type="password"
                 value={confirmPw}
                 onChange={(e) => setConfirmPw(e.target.value)}
+                disabled={isSub2Api}
                 required
               />
             </div>
@@ -831,7 +846,7 @@ function PasswordTab() {
               </div>
             )}
 
-            <Button type="submit" disabled={saving} className="w-full">
+            <Button type="submit" disabled={saving || isSub2Api} className="w-full">
               {saving ? (
                 <Loader2 data-icon="inline-start" className="animate-spin" />
               ) : (

@@ -22,6 +22,7 @@ import {
 import type { UpstreamKeyRow, UpstreamRow } from '@/components/upstreams-columns';
 import { buildUpstreamListSearchParams } from '@/lib/upstream-query';
 import { PageHeader } from '@/components/page-header';
+import { apiFetch } from '@/lib/api-fetch';
 
 type UpstreamKey = UpstreamKeyRow;
 type Upstream = UpstreamRow;
@@ -94,7 +95,7 @@ export default function UpstreamsPage() {
       confirmText: '删除',
     });
     if (!ok) return;
-    const res = await fetch(`/api/upstreams/${id}`, { method: 'DELETE' });
+    const res = await apiFetch(`/api/upstreams/${id}`, { method: 'DELETE' });
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       toast.error(data?.error || `删除 ${name} 失败`);
@@ -109,7 +110,7 @@ export default function UpstreamsPage() {
   }
 
   async function handleToggle(id: number, enabled: boolean) {
-    await fetch(`/api/upstreams/${id}`, {
+    await apiFetch(`/api/upstreams/${id}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: !enabled }),
     });
@@ -119,7 +120,7 @@ export default function UpstreamsPage() {
   async function handleTest(id: number, name: string) {
     const tid = toast.loading(`正在测试 ${name}…`);
     try {
-      const res = await fetch(`/api/upstreams/${id}/test`, { method: 'POST' });
+      const res = await apiFetch(`/api/upstreams/${id}/test`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         const okCount = data.results?.filter((r: { status: string }) => r.status === 'ok').length || 0;
@@ -192,7 +193,7 @@ function UpstreamFormDialog({ upstream, onClose, onSaved }: {
       const body = { name, baseUrl, type, testModel, enabled };
       const url = upstream ? `/api/upstreams/${upstream.id}` : '/api/upstreams';
       const method = upstream ? 'PUT' : 'POST';
-      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) { const d = await res.json(); setError(d.error || '保存失败'); return; }
       onSaved();
     } catch (e) { setError('保存失败: ' + (e as Error).message); }
@@ -277,7 +278,7 @@ function KeyManager({ upstreamId, type }: { upstreamId: number; type: string }) 
       confirmText: '删除',
     });
     if (!ok) return;
-    await fetch(`/api/upstreams/${upstreamId}/keys/${keyId}`, { method: 'DELETE' });
+    await apiFetch(`/api/upstreams/${upstreamId}/keys/${keyId}`, { method: 'DELETE' });
     toast.success(`已删除分组 ${group}`);
     fetchKeys();
   }
@@ -285,7 +286,7 @@ function KeyManager({ upstreamId, type }: { upstreamId: number; type: string }) 
   async function handleTestKey(keyId: number, group: string) {
     const tid = toast.loading(`正在测试 ${group}…`);
     try {
-      const res = await fetch(`/api/keys/${keyId}/test`, { method: 'POST' });
+      const res = await apiFetch(`/api/keys/${keyId}/test`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         toast.success(`${group}: 余额 ${data.balance != null ? `$${data.balance.toFixed(2)}` : '—'}, 延迟 ${data.latencyMs != null ? `${data.latencyMs}ms` : '—'}`, { id: tid });
@@ -299,7 +300,7 @@ function KeyManager({ upstreamId, type }: { upstreamId: number; type: string }) 
   async function handleRefreshKey(key: UpstreamKey) {
     setRefreshingKeyId(key.id);
     try {
-      const res = await fetch(`/api/keys/${key.id}/metadata`, { method: 'POST' });
+      const res = await apiFetch(`/api/keys/${key.id}/metadata`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error || '远端信息获取失败');
@@ -418,7 +419,7 @@ function KeyFormDialog({ upstreamId, upstreamType, keyData, onClose, onSaved }: 
       if (accessToken) body.accessToken = accessToken;
       const url = keyData ? `/api/upstreams/${upstreamId}/keys/${keyData.id}` : `/api/upstreams/${upstreamId}/keys`;
       const method = keyData ? 'PUT' : 'POST';
-      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) { const d = await res.json(); setError(d.error || '保存失败'); return; }
       toast.success(keyData ? '分组已更新' : '分组已创建');
       onSaved();

@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/page-header';
 import { beginLatestRequest } from '@/lib/request-sequence';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface Incident {
   id: number;
@@ -57,7 +58,7 @@ export default function IncidentsPage() {
   async function handleResolve(id: number) {
     setResolvingId(id);
     try {
-      await fetch(`/api/incidents/${id}`, {
+      await apiFetch(`/api/incidents/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resolved: true }),

@@ -7,6 +7,7 @@ import { Activity, LayoutDashboard, Server, Bell, Settings, LogOut, Menu, Sun, M
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/components/theme-provider';
 import { cn } from '@/lib/utils';
+import { apiFetch, resetApiFetchCache } from '@/lib/api-fetch';
 
 const NAV_ITEMS = [
   { href: '/', label: '总览', icon: LayoutDashboard },
@@ -21,7 +22,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   async function handleLogout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    await apiFetch('/api/auth/logout', { method: 'POST' });
+    resetApiFetchCache();
     router.push('/login');
     router.refresh();
   }

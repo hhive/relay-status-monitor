@@ -28,6 +28,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatGroupMultiplier, getKeyDisplayName, getKeyGroupLabel } from '@/lib/key-display';
 import { beginLatestRequest } from '@/lib/request-sequence';
+import { apiFetch } from '@/lib/api-fetch';
 
 // ============ 类型 ============
 
@@ -179,7 +180,7 @@ export default function UpstreamDetailPage() {
     setTesting(true);
     const tid = toast.loading(`正在测试 ${upstream.name} 的所有分组…`);
     try {
-      const res = await fetch(`/api/upstreams/${upstream.id}/test`, { method: 'POST' });
+      const res = await apiFetch(`/api/upstreams/${upstream.id}/test`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         const ok = data.results?.filter((r: { status: string }) => r.status === 'ok').length || 0;
@@ -205,7 +206,7 @@ export default function UpstreamDetailPage() {
     setRefreshing(true);
     const tid = toast.loading(`正在刷新 ${upstream.name}…`);
     try {
-      const res = await fetch(`/api/upstreams/${upstream.id}/refresh`, { method: 'POST' });
+      const res = await apiFetch(`/api/upstreams/${upstream.id}/refresh`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast.error(data.error || '刷新失败', { id: tid });
@@ -241,7 +242,7 @@ export default function UpstreamDetailPage() {
     });
     if (!ok) return;
     try {
-      const res = await fetch(`/api/upstreams/${upstream.id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/upstreams/${upstream.id}`, { method: 'DELETE' });
       if (!res.ok) {
         const d = await res.json();
         toast.error(d.error || '删除失败');
@@ -257,7 +258,7 @@ export default function UpstreamDetailPage() {
   async function handleRefreshMetadata(key: UpstreamKey) {
     setRefreshingKeyId(key.id);
     try {
-      const res = await fetch(`/api/keys/${key.id}/metadata`, { method: 'POST' });
+      const res = await apiFetch(`/api/keys/${key.id}/metadata`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error || '远端信息获取失败');
