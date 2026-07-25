@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { createSession, requireApiSession, verifyPassword, hashPassword } from '@/lib/auth';
+import { createSession, requireLocalApiSession, verifyPassword, hashPassword } from '@/lib/auth';
 import { passwordMeetsPolicy } from '@/lib/login-policy';
 
 /** 修改密码 */
 export async function POST(request: Request) {
-  const auth = await requireApiSession();
+  const auth = await requireLocalApiSession();
   if (!auth.ok) return auth.response;
   const session = auth.session;
   try {

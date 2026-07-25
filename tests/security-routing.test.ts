@@ -7,6 +7,9 @@ import { NextRequest } from 'next/server';
 
 import { parseStrictPositiveInteger, safeRedirectPath } from '../src/lib/security';
 import { middleware } from '../src/middleware';
+import { createAdminSession } from '../src/lib/admin-session-token';
+import { ADMIN_APP_ID } from '../src/lib/admin-sso';
+import { signSessionToken } from '../src/lib/session-token';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -141,4 +144,62 @@ test('middleware returns 401 for unauthenticated APIs and a safe login redirect 
   const location = new URL(pageResponse.headers.get('location')!);
   assert.equal(location.pathname, '/login');
   assert.equal(location.searchParams.get('redirect'), '/upstreams?view=all');
+});
+
+test('middleware accepts valid local and admin sessions for pages and APIs', async () => {
+  const previousSessionSecret = process.env.SESSION_SECRET;
+  const previousEncryptionKey = process.env.APP_ENCRYPTION_KEY;
+  process.env.SESSION_SECRET = 's'.repeat(32);
+  process.env.APP_ENCRYPTION_KEY = 'e'.repeat(32);
+  try {
+    const local = await signSessionToken({ userId: 7, username: 'local', sessionVersion: 1 });
+    const admin = await createAdminSession({
+      user_id: 19,
+      email: 'owner@example.test',
+      username: 'owner',
+      role: 'admin',
+      app_id: ADMIN_APP_ID,
+      issued_at: 1_800_000_000,
+      expires_at: 1_800_000_060,
+    }, 600);
+    const cases = [
+      ['rsm_session', local],
+      ['rsm_admin_session', admin],
+    ] as const;
+
+    for (const [name, value] of cases) {
+      for (const pathname of ['/', '/api/dashboard']) {
+        const request = new NextRequest(`https://monitor.example${pathname}`, {
+          headers: { cookie: `${name}=${value}` },
+        });
+        const response = await middleware(request);
+        assert.equal(response.headers.get('x-middleware-next'), '1', `${name}:${pathname}`);
+      }
+    }
+  } finally {
+    if (previousSessionSecret === undefined) delete process.env.SESSION_SECRET;
+    else process.env.SESSION_SECRET = previousSessionSecret;
+    if (previousEncryptionKey === undefined) delete process.env.APP_ENCRYPTION_KEY;
+    else process.env.APP_ENCRYPTION_KEY = previousEncryptionKey;
+  }
+});
+
+test('auth endpoints expose the session union safely and keep password local-only', () => {
+  const auth = source('src/lib/auth.ts');
+  const me = source('src/app/api/auth/me/route.ts');
+  const logout = source('src/app/api/auth/logout/route.ts');
+  const password = source('src/app/api/auth/password/route.ts');
+
+  assert.match(auth, /AdminApiSession\s*\|\s*LocalApiSession/);
+  assert.match(auth, /source:\s*'local'/);
+  assert.ok(auth.indexOf('ADMIN_SESSION_COOKIE_NAME') < auth.indexOf('COOKIE_NAME'));
+  assert.match(auth, /export async function requireLocalApiSession/);
+  assert.match(me, /source:\s*session\.source/);
+  assert.match(me, /session\.source\s*===\s*'sub2api'/);
+  assert.match(me, /csrfToken:\s*session\.csrfToken/);
+  assert.doesNotMatch(me, /email:\s*session\.|role:\s*session\./);
+  assert.match(logout, /destroySession/);
+  assert.match(password, /requireLocalApiSession/);
+  assert.ok(password.indexOf('await requireLocalApiSession()') < password.indexOf('request.json('));
+  assert.ok(password.indexOf('await requireLocalApiSession()') < password.indexOf('prisma.$transaction'));
 });

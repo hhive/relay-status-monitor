@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { safeRedirectPath } from '@/lib/security';
 import { verifySessionToken } from '@/lib/session-token';
+import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSession } from '@/lib/admin-session-token';
 
 /**
  * 路由守卫中间件
@@ -35,15 +36,13 @@ export async function middleware(request: NextRequest) {
   }
 
   // 校验会话
-  const token = request.cookies.get(COOKIE_NAME)?.value;
-  if (!token) {
-    return redirectToLogin(request);
-  }
-
   try {
-    const session = await verifySessionToken(token);
-    if (!session) return redirectToLogin(request);
-    return NextResponse.next();
+    const adminToken = request.cookies.get(ADMIN_SESSION_COOKIE_NAME)?.value;
+    if (adminToken && await verifyAdminSession(adminToken)) return NextResponse.next();
+
+    const token = request.cookies.get(COOKIE_NAME)?.value;
+    if (token && await verifySessionToken(token)) return NextResponse.next();
+    return redirectToLogin(request);
   } catch {
     return redirectToLogin(request);
   }

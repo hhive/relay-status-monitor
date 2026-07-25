@@ -11,6 +11,7 @@ import {
   type AdminClaims,
 } from '../src/lib/admin-sso';
 import { createAdminLaunchHandler } from '../src/app/api/sub2api/admin-launch/route';
+import { attachAdminSession, createAdminSession } from '../src/lib/admin-session-token';
 
 const strongSecret = 'admin-exchange-secret-for-tests-only';
 const validEnvironment = {
@@ -160,6 +161,36 @@ test('admin sso landing requires one non-empty token and redirects after attachi
   assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
   assert.equal(response.headers.get('x-test-session-attached'), 'yes');
   assert.deepEqual(calls, ['exchange:one-time-ticket', 'create', 'attach']);
+});
+
+test('admin sso landing can sign and attach the real isolated admin cookie', async () => {
+  const previousSessionSecret = process.env.SESSION_SECRET;
+  const previousEncryptionKey = process.env.APP_ENCRYPTION_KEY;
+  process.env.SESSION_SECRET = 's'.repeat(32);
+  process.env.APP_ENCRYPTION_KEY = 'e'.repeat(32);
+  try {
+    const handler = createAdminLaunchHandler({
+      exchangeAdminTicket: async () => ({ claims: validClaims, sessionTtlSeconds: 600 }),
+      createAdminSession,
+      attachAdminSession,
+    });
+    const response = await handler(new Request(
+      'https://monitor.example.test/api/sub2api/admin-launch?token=one-time-ticket',
+    ));
+    const cookie = response.headers.get('set-cookie') ?? '';
+
+    assert.equal(response.status, 303);
+    assert.match(cookie, /^rsm_admin_session=/);
+    assert.match(cookie, /HttpOnly/);
+    assert.match(cookie, /Path=\//);
+    assert.match(cookie, /Max-Age=600/);
+    assert.match(cookie, /SameSite=lax/i);
+  } finally {
+    if (previousSessionSecret === undefined) delete process.env.SESSION_SECRET;
+    else process.env.SESSION_SECRET = previousSessionSecret;
+    if (previousEncryptionKey === undefined) delete process.env.APP_ENCRYPTION_KEY;
+    else process.env.APP_ENCRYPTION_KEY = previousEncryptionKey;
+  }
 });
 
 test('admin sso landing returns one redacted 401 response for invalid or failed launches', async () => {
