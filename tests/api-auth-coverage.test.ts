@@ -10,6 +10,7 @@ const publicRoutes = new Set([
   'auth/login/route.ts',
   'auth/logout/route.ts',
   'cron/collect/route.ts',
+  'sub2api/admin-launch/route.ts',
 ]);
 
 function routeFiles(directory: string): string[] {

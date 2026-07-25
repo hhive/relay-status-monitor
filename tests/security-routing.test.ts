@@ -99,6 +99,7 @@ test('middleware exposes only exact public endpoints and framework assets', asyn
     '/api/auth/login',
     '/api/auth/logout',
     '/api/cron/collect',
+    '/api/sub2api/admin-launch?token=one-time-ticket',
     '/_next/static/chunks/app.js',
     '/_next/image?url=%2Flogo.png&w=64&q=75',
     '/favicon.ico',
@@ -107,7 +108,13 @@ test('middleware exposes only exact public endpoints and framework assets', asyn
     assert.equal(response.headers.get('x-middleware-next'), '1', pathname);
   }
 
-  for (const pathname of ['/login.evil', '/.env', '/api/data.json']) {
+  for (const pathname of [
+    '/login.evil',
+    '/.env',
+    '/api/data.json',
+    '/api/sub2api/admin-launch.evil?token=one-time-ticket',
+    '/api/sub2api/admin-launch/nested?token=one-time-ticket',
+  ]) {
     const response = await middleware(new NextRequest(`https://monitor.example${pathname}`));
     if (pathname.startsWith('/api/')) {
       assert.equal(response.status, 401, pathname);

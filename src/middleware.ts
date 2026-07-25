@@ -5,7 +5,7 @@ import { verifySessionToken } from '@/lib/session-token';
 /**
  * 路由守卫中间件
  * 保护 /（dashboard）路由，未登录跳转 /login
- * 仅登录、注销、采集入口和 Next.js 框架资源公开
+ * 仅登录、注销、采集、管理员票据入口和 Next.js 框架资源公开
  */
 
 const COOKIE_NAME = 'rsm_session';
@@ -14,6 +14,7 @@ const PUBLIC_PATHS = new Set([
   '/api/auth/login',
   '/api/auth/logout',
   '/api/cron/collect',
+  '/api/sub2api/admin-launch',
 ]);
 
 export async function middleware(request: NextRequest) {
