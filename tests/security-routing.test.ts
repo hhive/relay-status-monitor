@@ -291,10 +291,11 @@ test('auth endpoints expose the session union safely and keep password local-onl
   assert.match(auth, /source:\s*'local'/);
   assert.ok(auth.indexOf('ADMIN_SESSION_COOKIE_NAME') < auth.indexOf('COOKIE_NAME'));
   assert.match(auth, /export async function requireLocalApiSession/);
-  assert.match(me, /source:\s*session\.source/);
-  assert.match(me, /session\.source\s*===\s*'sub2api'/);
-  assert.match(me, /csrfToken:\s*session\.csrfToken/);
-  assert.doesNotMatch(me, /email:\s*session\.|role:\s*session\./);
+  assert.match(me, /toMeResponseBody\(auth\.session\)/);
+  assert.match(auth, /source:\s*session\.source/);
+  assert.match(auth, /session\.source\s*===\s*'sub2api'/);
+  assert.match(auth, /csrfToken:\s*session\.csrfToken/);
+  assert.doesNotMatch(auth, /email:\s*session\.|role:\s*session\./);
   assert.match(logout, /destroySession/);
   assert.match(password, /requireLocalApiSession/);
   assert.ok(password.indexOf('await requireLocalApiSession()') < password.indexOf('request.json('));
