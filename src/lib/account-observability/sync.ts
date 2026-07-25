@@ -21,15 +21,12 @@ interface AccountProjection {
   type: string | null;
   remote_status: string | null;
   probe_enabled: boolean | null;
-  probe_projection: Record<string, unknown> | null;
+  probe_status: string | null;
+  probe_resolved_rate_multiplier: string | null;
+  probe_peak_rate_multiplier: string | null;
+  probe_timezone: string | null;
+  probe_next_at: string | null;
   remote_updated_at: Date | null;
-}
-
-function probeValue(probe: Record<string, unknown> | null, key: string): string | null {
-  const value = probe?.data && typeof probe.data === 'object'
-    ? (probe.data as Record<string, unknown>)[key]
-    : probe?.[key];
-  return typeof value === 'string' || typeof value === 'number' ? String(value) : null;
 }
 
 export async function syncSub2ApiAccounts(
@@ -49,7 +46,6 @@ export async function syncSub2ApiAccounts(
   for (const row of rows) {
     if (!row.source_account_id || !row.name) { ignoredCount += 1; continue; }
     const state = projectSyncState({ status: row.remote_status, schedulable: true }, true);
-    const probe = row.probe_projection;
     await monitorClient.sub2ApiAccount.upsert({
       where: { sourceAccountId: row.source_account_id },
       create: {
@@ -60,10 +56,10 @@ export async function syncSub2ApiAccounts(
         remoteStatus: row.remote_status,
         schedulable: state.schedulable,
         probeEnabled: row.probe_enabled === true,
-        probeStatus: typeof probe?.status === 'string' ? probe.status : null,
+        probeStatus: row.probe_status,
         probeFreshAt: row.remote_updated_at,
-        probeResolvedRateMultiplier: probeValue(probe, 'resolved_rate_multiplier'),
-        probePeakRateMultiplier: probeValue(probe, 'peak_rate_multiplier'),
+        probeResolvedRateMultiplier: row.probe_resolved_rate_multiplier,
+        probePeakRateMultiplier: row.probe_peak_rate_multiplier,
         syncState: state.syncState,
         remoteUpdatedAt: row.remote_updated_at,
         lastSyncedAt: new Date(),
@@ -75,10 +71,10 @@ export async function syncSub2ApiAccounts(
         remoteStatus: row.remote_status,
         schedulable: state.schedulable,
         probeEnabled: row.probe_enabled === true,
-        probeStatus: typeof probe?.status === 'string' ? probe.status : null,
+        probeStatus: row.probe_status,
         probeFreshAt: row.remote_updated_at,
-        probeResolvedRateMultiplier: probeValue(probe, 'resolved_rate_multiplier'),
-        probePeakRateMultiplier: probeValue(probe, 'peak_rate_multiplier'),
+        probeResolvedRateMultiplier: row.probe_resolved_rate_multiplier,
+        probePeakRateMultiplier: row.probe_peak_rate_multiplier,
         syncState: state.syncState,
         remoteUpdatedAt: row.remote_updated_at,
         lastSyncedAt: new Date(),

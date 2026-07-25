@@ -7,8 +7,13 @@ export const ACCOUNT_PROJECTION_SQL = `
     platform,
     type,
     status AS remote_status,
-    extra -> 'upstream_billing_probe_enabled' AS probe_enabled,
-    extra -> 'upstream_billing_probe' AS probe_projection,
+    CASE WHEN jsonb_typeof(extra -> 'upstream_billing_probe_enabled') = 'boolean'
+      THEN (extra ->> 'upstream_billing_probe_enabled')::boolean ELSE false END AS probe_enabled,
+    extra #>> '{upstream_billing_probe,status}' AS probe_status,
+    extra #>> '{upstream_billing_probe,data,resolved_rate_multiplier}' AS probe_resolved_rate_multiplier,
+    extra #>> '{upstream_billing_probe,data,peak_rate_multiplier}' AS probe_peak_rate_multiplier,
+    extra #>> '{upstream_billing_probe,data,timezone}' AS probe_timezone,
+    extra #>> '{upstream_billing_probe,data,next_probe_at}' AS probe_next_at,
     updated_at AS remote_updated_at
   FROM accounts
   WHERE deleted_at IS NULL
