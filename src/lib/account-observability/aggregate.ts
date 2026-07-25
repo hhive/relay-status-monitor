@@ -16,6 +16,7 @@ export interface UsageEvent {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   actualCost: string;
+  totalCost: string;
   accountStatsCost: string | null;
   accountRateMultiplier: string | null;
 }
@@ -43,6 +44,7 @@ export interface MinuteAggregate {
   userBilledMicroUsd: number;
   accountBilledMicroUsd: number;
   errorStatusCounts: Record<string, number>;
+  errorPhaseCounts: Record<string, number>;
 }
 
 export function aggregateMinute(input: { usages: UsageEvent[]; errors: ErrorEvent[] }): MinuteAggregate {
@@ -71,6 +73,7 @@ export function aggregateMinute(input: { usages: UsageEvent[]; errors: ErrorEven
     userBilledMicroUsd: 0,
     accountBilledMicroUsd: 0,
     errorStatusCounts: {},
+    errorPhaseCounts: {},
   };
   for (const usage of usages.values()) {
     if (usage.durationMs != null && usage.durationMs >= 0) {
@@ -87,13 +90,15 @@ export function aggregateMinute(input: { usages: UsageEvent[]; errors: ErrorEven
     result.userBilledMicroUsd += Number(decimalToMicroUsd(usage.actualCost));
     result.accountBilledMicroUsd += snapshotBillingMicroUsd({
       accountStatsCost: usage.accountStatsCost,
-      totalCost: usage.accountStatsCost == null ? usage.actualCost : null,
+      totalCost: usage.totalCost,
       rateMultiplier: usage.accountRateMultiplier,
     });
   }
   for (const error of errors.values()) {
     const code = String(error.statusCode ?? 'unknown');
     result.errorStatusCounts[code] = (result.errorStatusCounts[code] ?? 0) + 1;
+    const phase = error.errorPhase ?? 'unknown';
+    result.errorPhaseCounts[phase] = (result.errorPhaseCounts[phase] ?? 0) + 1;
   }
   return result;
 }

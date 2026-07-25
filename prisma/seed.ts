@@ -17,6 +17,16 @@ const defaultRules = [
   { name: '可用率低', metric: 'availability', operator: 'lt', threshold: 95, severity: 'WARNING' as const, cooldownMin: 60, enabled: true },
 ];
 
+const defaultAccountRules = [
+  { name: '账号可用率低', metric: 'availability', operator: 'lt', threshold: 0.95, minRequests: 20, cooldownMin: 60 },
+  { name: '账号错误率高', metric: 'error_rate', operator: 'gt', threshold: 0.1, minRequests: 20, cooldownMin: 30 },
+  { name: '账号总延迟P95高', metric: 'duration_p95', operator: 'gt', threshold: 5000, minRequests: 10, cooldownMin: 30 },
+  { name: '账号首TokenP95高', metric: 'first_token_p95', operator: 'gt', threshold: 3000, minRequests: 10, cooldownMin: 30 },
+  { name: '账号缓存命中率低', metric: 'cache_hit_rate', operator: 'lt', threshold: 0.1, minRequests: 20, minPromptTokens: 10000, cooldownMin: 60 },
+  { name: '账号持续不可调度', metric: 'unschedulable', operator: 'eq', threshold: 1, minRequests: 0, cooldownMin: 30 },
+  { name: '账号同步陈旧', metric: 'sync_stale', operator: 'gt', threshold: 10, minRequests: 0, cooldownMin: 30 },
+];
+
 const defaultSettings: Record<string, string> = {
   light_interval_minutes: '1',
   heavy_interval_minutes: '15',
@@ -51,6 +61,15 @@ async function main() {
     });
   }
   console.log(`${defaultRules.length} 条默认告警规则已就绪`);
+
+  for (const rule of defaultAccountRules) {
+    await prisma.accountAlertRule.upsert({
+      where: { name: rule.name },
+      update: { ...rule, enabled: true },
+      create: { ...rule, enabled: true },
+    });
+  }
+  console.log(`${defaultAccountRules.length} 条账号告警规则已就绪`);
 
   for (const [key, value] of Object.entries(defaultSettings)) {
     await prisma.setting.upsert({

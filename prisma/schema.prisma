@@ -149,8 +149,13 @@ model Sub2ApiAccount {
   probeEnabled               Boolean                @default(false)
   probeStatus                String?
   probeFreshAt               DateTime?
+  probeBillingScope          String?
   probeResolvedRateMultiplier Decimal?               @db.Decimal(20, 8)
+  probePeakRateEnabled       Boolean?
+  probePeakStart             String?
+  probePeakEnd               String?
   probePeakRateMultiplier    Decimal?               @db.Decimal(20, 8)
+  probeTimezone              String?
   probeLastSuccessAt         DateTime?
   syncState                  Sub2ApiAccountSyncState @default(ACTIVE)
   remoteUpdatedAt            DateTime?
@@ -161,6 +166,8 @@ model Sub2ApiAccount {
 
   metricMinutes              AccountMetricMinute[]
   syncRuns                   AccountSyncRun[]
+  alertEvents                AccountAlertEvent[]
+  alertRules                 AccountAlertRule[]
 
   @@index([syncState, remoteStatus])
   @@index([lastSyncedAt])
@@ -213,6 +220,48 @@ model AccountSyncRun {
 
   @@index([type, startedAt])
   @@index([status, startedAt])
+}
+
+/// 账号真实流量与同步状态的专属告警规则
+model AccountAlertRule {
+  id              Int                 @id @default(autoincrement())
+  accountId       Int?
+  account         Sub2ApiAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name            String              @unique
+  metric          String
+  operator        String
+  threshold       Float
+  severity        Severity            @default(WARNING)
+  minRequests     Int                 @default(1)
+  minPromptTokens Int                 @default(0)
+  cooldownMin     Int                 @default(30)
+  enabled         Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  events          AccountAlertEvent[]
+
+  @@index([enabled, metric])
+  @@index([accountId, enabled])
+  @@unique([accountId, metric])
+}
+
+/// 账号告警的触发与恢复记录
+model AccountAlertEvent {
+  id          Int              @id @default(autoincrement())
+  accountId   Int
+  account     Sub2ApiAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  ruleId      Int
+  rule        AccountAlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  metric      String
+  severity    Severity         @default(WARNING)
+  metricValue Float?
+  message     String           @db.Text
+  resolved    Boolean          @default(false)
+  resolvedAt  DateTime?
+  createdAt   DateTime         @default(now())
+
+  @@index([accountId, ruleId, resolved, createdAt])
+  @@index([resolved, createdAt])
 }
 
 /// 每次采集的指标快照（时间序列）

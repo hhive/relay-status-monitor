@@ -25,6 +25,20 @@ interface IncidentLike {
   metricValue?: number | null;
 }
 
+interface AccountIncidentLike {
+  id: number;
+  metric: string;
+  severity?: string;
+  message: string;
+  metricValue?: number | null;
+}
+
+interface AccountContext {
+  name: string;
+  sourceAccountId: string;
+  platform: string | null;
+}
+
 /** 发送告警通知到所有启用的渠道 */
 export async function sendNotification(
   incident: IncidentLike,
@@ -44,6 +58,25 @@ export async function sendNotification(
     if (result.status === 'rejected') {
       console.error('[告警] 渠道发送失败:', safeErrorMessage(result.reason));
     }
+  }
+}
+
+/** 复用同一组渠道发送账号真实流量告警。 */
+export async function sendAccountNotification(
+  incident: AccountIncidentLike,
+  account: AccountContext,
+  isRecovery = false,
+): Promise<void> {
+  const channels = await prisma.alertChannel.findMany({ where: { enabled: true } });
+  const results = await Promise.allSettled(channels.map(async (channel) => {
+    if (channel.type !== 'feishu') {
+      console.warn(`[告警] 未知渠道类型: ${channel.type}`);
+      return;
+    }
+    await sendFeishuAccount(openAlertChannelConfig(channel.config).config, incident, account, isRecovery);
+  }));
+  for (const result of results) {
+    if (result.status === 'rejected') console.error('[告警] 渠道发送失败:', safeErrorMessage(result.reason));
   }
 }
 
@@ -135,6 +168,50 @@ async function sendFeishu(
   if (typeof responseBody?.code === 'number' && responseBody.code !== 0) {
     throw new Error(`飞书返回错误: code=${responseBody.code}`);
   }
+}
+
+async function sendFeishuAccount(
+  config: { webhookUrl: string; secret?: string },
+  incident: AccountIncidentLike,
+  account: AccountContext,
+  isRecovery: boolean,
+): Promise<void> {
+  if (!config?.webhookUrl) return;
+  const card = {
+    config: { wide_screen_mode: true },
+    header: {
+      template: isRecovery ? 'green' : severityColor(incident.severity ?? 'WARNING'),
+      title: { tag: 'plain_text', content: `${isRecovery ? '告警恢复' : '监控告警'} · ${account.name}` },
+    },
+    elements: [
+      {
+        tag: 'div',
+        fields: [
+          { is_short: true, text: { tag: 'lark_md', content: `**账号**\n${account.name}` } },
+          { is_short: true, text: { tag: 'lark_md', content: `**平台**\n${account.platform ?? '-'}` } },
+          { is_short: true, text: { tag: 'lark_md', content: `**账号 ID**\n${account.sourceAccountId}` } },
+          { is_short: true, text: { tag: 'lark_md', content: `**指标**\n${incident.metric}` } },
+          { is_short: true, text: { tag: 'lark_md', content: `**级别**\n${incident.severity ?? 'WARNING'}` } },
+        ],
+      },
+      { tag: 'hr' },
+      { tag: 'div', text: { tag: 'lark_md', content: `**详情**\n${incident.message}` } },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: `时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` }] },
+    ],
+  };
+  const body: Record<string, unknown> = { msg_type: 'interactive', card };
+  if (config.secret) {
+    const timestamp = Math.floor(Date.now() / 1000);
+    body.timestamp = String(timestamp);
+    body.sign = genSign(timestamp, config.secret);
+  }
+  const outbound = await fetchCredentialed(validateFeishuWebhookUrl(config.webhookUrl), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }, 10_000);
+  if (!outbound.ok) throw new Error(outbound.error.message);
+  if (!outbound.response.ok) throw new Error(`飞书 Webhook 发送失败: HTTP ${outbound.response.status}`);
+  const responseBody = await outbound.response.json().catch(() => null) as { code?: unknown } | null;
+  if (typeof responseBody?.code === 'number' && responseBody.code !== 0) throw new Error(`飞书返回错误: code=${responseBody.code}`);
 }
 
 function genSign(timestamp: number, secret: string): string {

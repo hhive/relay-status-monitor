@@ -17,8 +17,8 @@ test('active but temporarily unschedulable accounts stay active, missing account
 test('minute aggregation attributes provider errors per account and deduplicates only same account request', () => {
   const result = aggregateMinute({
     usages: [
-      { accountId: 'a', requestId: 'req-ok', durationMs: 100, firstTokenMs: 25, inputTokens: 10, cacheReadTokens: 5, cacheCreationTokens: 0, actualCost: '0.1', accountStatsCost: '0.08', accountRateMultiplier: '2' },
-      { accountId: 'b', requestId: 'req-failover', durationMs: 200, firstTokenMs: null, inputTokens: 20, cacheReadTokens: 0, cacheCreationTokens: 0, actualCost: '0.2', accountStatsCost: null, accountRateMultiplier: null },
+      { accountId: 'a', requestId: 'req-ok', durationMs: 100, firstTokenMs: 25, inputTokens: 10, cacheReadTokens: 5, cacheCreationTokens: 0, actualCost: '0.1', totalCost: '0.1', accountStatsCost: '0.08', accountRateMultiplier: '2' },
+      { accountId: 'b', requestId: 'req-failover', durationMs: 200, firstTokenMs: null, inputTokens: 20, cacheReadTokens: 0, cacheCreationTokens: 0, actualCost: '0.2', totalCost: '0.25', accountStatsCost: null, accountRateMultiplier: null },
     ],
     errors: [
       { accountId: 'a', requestId: 'req-error', clientRequestId: 'same', errorOwner: 'provider', errorPhase: 'upstream', statusCode: 429 },
@@ -31,7 +31,7 @@ test('minute aggregation attributes provider errors per account and deduplicates
   assert.equal(result.upstreamErrorCount, 2);
   assert.equal(result.eligibleCount, 4);
   assert.equal(result.userBilledMicroUsd, 300000);
-  assert.equal(result.accountBilledMicroUsd, 360000);
+  assert.equal(result.accountBilledMicroUsd, 410000);
   assert.equal(result.cacheReadTokens, 5);
   assert.equal(result.durationHistogram['100'], 1);
   assert.equal(result.firstTokenHistogram['25'], 1);

@@ -26,6 +26,19 @@ export interface BillingSnapshot {
 
 export type LatencyHistogram = Record<string, number>;
 
+export interface BillingRateSnapshot {
+  status: string | null;
+  billingScope: string | null;
+  resolvedRateMultiplier: number | null;
+  peakRateEnabled: boolean | null;
+  peakStart: string | null;
+  peakEnd: string | null;
+  peakRateMultiplier: number | null;
+  timezone: string | null;
+  receivedAt: Date | null;
+  freshUntil: Date | null;
+}
+
 export function isEligibleProviderError(input: ProviderErrorInput): boolean {
   return input.accountId > 0
     && input.errorOwner === 'provider'
@@ -59,6 +72,30 @@ export function snapshotBillingMicroUsd(snapshot: BillingSnapshot): number {
   const multiplier = decimalToMicroUsd(snapshot.rateMultiplier ?? 1);
   const result = (base * multiplier + BigInt(500000)) / BigInt(1000000);
   return Number(result);
+}
+
+export function effectiveBillingRate(snapshot: BillingRateSnapshot, now = new Date()): number | null {
+  const base = snapshot.resolvedRateMultiplier;
+  if (snapshot.status !== 'ok' || snapshot.billingScope !== 'token' || base == null || base < 0 ||
+      !snapshot.receivedAt || !snapshot.freshUntil || snapshot.receivedAt.getTime() > now.getTime() + 5 * 60_000 ||
+      snapshot.freshUntil <= snapshot.receivedAt || now > snapshot.freshUntil) return null;
+  if (snapshot.peakRateEnabled === false) return base;
+  if (snapshot.peakRateEnabled !== true || !snapshot.timezone || snapshot.peakRateMultiplier == null || snapshot.peakRateMultiplier < 0) return null;
+  const parseMinute = (value: string | null) => {
+    const match = /^(\d{2}):(\d{2})$/.exec(value ?? '');
+    if (!match) return null;
+    const hour = Number(match[1]); const minute = Number(match[2]);
+    return hour < 24 && minute < 60 ? hour * 60 + minute : null;
+  };
+  const start = parseMinute(snapshot.peakStart); const end = parseMinute(snapshot.peakEnd);
+  if (start == null || end == null || start >= end) return null;
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: snapshot.timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
+    const minute = Number(parts.find((part) => part.type === 'hour')?.value) * 60 + Number(parts.find((part) => part.type === 'minute')?.value);
+    return minute >= start && minute < end ? base * snapshot.peakRateMultiplier : base;
+  } catch {
+    return null;
+  }
 }
 
 export function minuteBucket(value: Date): Date {
