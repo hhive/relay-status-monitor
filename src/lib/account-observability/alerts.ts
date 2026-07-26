@@ -2,6 +2,7 @@ import { prisma } from '../db';
 import type { Prisma, Severity } from '@prisma/client';
 import { sendAccountNotification } from '../alerts/channels/feishu';
 import { effectiveBillingRate, histogramP95, mergeLatencyHistogram, minuteBucket } from './metrics';
+import { normalizeGlobalAccountAlertMetric } from './alert-management';
 
 export type AccountAlertMetric =
   | 'availability_low'
@@ -45,6 +46,8 @@ export interface AccountAlertAccountRecord {
   name: string;
   platform: string | null;
   schedulable: boolean | null;
+  /** 账号告警总开关；为 false 时该账号的所有规则都不评估、不推送。缺省视为开启。 */
+  alertEnabled?: boolean;
   syncState: string;
   lastSyncedAt: Date | null;
   probeFreshAt: Date | null;
@@ -223,8 +226,15 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
   return async (now = new Date()): Promise<void> => {
     const end = minuteBucket(now);
     const start = new Date(end.getTime() - ALERT_WINDOW_MINUTES * 60_000);
-    const [rules, accounts] = await Promise.all([dependencies.loadRules(), dependencies.loadAccounts({ start, end })]);
+    const [storedRules, accounts] = await Promise.all([dependencies.loadRules(), dependencies.loadAccounts({ start, end })]);
+    const rules = storedRules.flatMap((rule) => {
+      const metric = rule.metric === 'upstream_rate_multiplier'
+        ? rule.metric
+        : normalizeGlobalAccountAlertMetric(rule.metric);
+      return metric ? [{ ...rule, metric }] : [];
+    });
     for (const account of accounts) {
+      if (account.alertEnabled === false) continue;
       const needsLatestMetricBucket = rules.some((rule) =>
         rule.enabled && rule.metric === 'sync_stale' && (rule.accountId == null || rule.accountId === account.id));
       const latestMetricBucketStart = needsLatestMetricBucket
@@ -271,7 +281,7 @@ export async function evaluateAccountAlerts(now = new Date()): Promise<void> {
   return createAccountAlertEvaluator({
     loadRules: async () => (await prisma.accountAlertRule.findMany({ where: { enabled: true } })) as AccountAlertRuleRecord[],
     loadAccounts: async ({ start, end }) => (await prisma.sub2ApiAccount.findMany({
-      where: { syncState: 'ACTIVE' },
+      where: { syncState: 'ACTIVE', alertEnabled: true },
       include: { metricMinutes: { where: { bucketStart: { gte: start, lt: end } } } },
     })) as AccountAlertAccountRecord[],
     loadLatestMetricBucket: async (accountId) => {

@@ -89,6 +89,16 @@ test('traffic alerts enforce request and prompt-token minimums', async () => {
   assert.equal(lowTokens.created.length, 0);
 });
 
+test('legacy stored metrics are evaluated and emitted with canonical event metrics', async () => {
+  const run = harness({
+    rules: [rule({ metric: 'availability' as never, threshold: 0.9, minRequests: 1 })],
+    minutes: [minute({ successCount: 2, upstreamErrorCount: 8, eligibleCount: 10 })],
+  });
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.equal(run.created.length, 1);
+  assert.equal(run.created[0]?.metric, 'availability_low');
+});
+
 test('active alert is suppressed and a recently recovered alert remains in cooldown', async () => {
   const open = harness({ rules: [rule()], minutes: [minute({ successCount: 2, upstreamErrorCount: 8 })], openEvents: [{ id: 7, accountId: 9, ruleId: 1, metric: 'availability_low', message: 'low' }] });
   await open.evaluate(new Date('2026-07-25T12:00:00Z'));
@@ -237,6 +247,44 @@ test('cleared condition finishes a partial trigger delivery before recovery', as
     { recovery: true, delivered: [] },
   ]);
   assert.deepEqual(run.resolved.map((entry) => entry.id), [100]);
+});
+
+test('account alert master switch off suppresses every rule including multiplier', async () => {
+  const availabilityRule = rule({ minRequests: 1 });
+  const multiplierRule = rule({ id: 2, accountId: 9, metric: 'upstream_rate_multiplier', operator: 'gt', threshold: 1.5, minRequests: 0 });
+  const snapshot = {
+    probeStatus: 'ok', probeBillingScope: 'token', probeResolvedRateMultiplier: '2',
+    probePeakRateEnabled: false, probeLastSuccessAt: new Date('2026-07-25T11:59:00Z'),
+    probeFreshAt: new Date('2026-07-25T13:00:00Z'),
+  };
+  const off = harness({
+    rules: [availabilityRule, multiplierRule],
+    minutes: [minute({ successCount: 2, upstreamErrorCount: 8 })],
+    account: { alertEnabled: false, ...snapshot },
+  });
+  await off.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.equal(off.created.length, 0);
+  assert.deepEqual(off.notified, []);
+
+  const on = harness({
+    rules: [availabilityRule, multiplierRule],
+    minutes: [minute({ successCount: 2, upstreamErrorCount: 8 })],
+    account: { alertEnabled: true, ...snapshot },
+  });
+  await on.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.deepEqual(on.created.map((event) => event.metric).sort(), ['availability_low', 'upstream_rate_multiplier']);
+});
+
+test('account alert master switch off leaves existing open events untouched', async () => {
+  const run = harness({
+    rules: [rule()],
+    minutes: [minute({ successCount: 10, upstreamErrorCount: 0 })],
+    account: { alertEnabled: false },
+    openEvents: [{ id: 7, accountId: 9, ruleId: 1, metric: 'availability_low', metricValue: 0.2, message: 'low' }],
+  });
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.deepEqual(run.resolved, []);
+  assert.deepEqual(run.notified, []);
 });
 
 test('stale multiplier snapshots are excluded while fresh snapshots can alert', async () => {

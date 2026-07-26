@@ -12,7 +12,7 @@ function source(path: string): string {
 
 const accounts = [
   { id: 1, name: 'Alpha', platform: 'openai', syncState: 'ACTIVE', schedulable: true, groupProjection: [{ id: 7, name: 'Premium' }] },
-  { id: 2, name: 'Beta', platform: 'anthropic', syncState: 'ACTIVE', schedulable: false, groupProjection: [{ id: 8, name: 'Fallback' }] },
+  { id: 2, name: 'Beta', platform: 'anthropic', syncState: 'ACTIVE', schedulable: false, alertEnabled: false, groupProjection: [{ id: 8, name: 'Fallback' }] },
   { id: 3, name: 'Retired', platform: 'openai', syncState: 'RETIRED', schedulable: false, groupProjection: [] },
 ];
 
@@ -25,13 +25,13 @@ test('server windows end at the latest complete minute and reject unknown keys',
   assert.equal(resolveAccountWindow('last24h', now).expectedMinutes, 1440);
   assert.equal(resolveAccountWindow('today', now).start.toISOString(), '2026-07-24T16:00:00.000Z');
   assert.throws(() => resolveAccountWindow('week' as never, now), /window/i);
-  assert.equal(parseAccountWindow(null), 'today');
+  assert.equal(parseAccountWindow(null), 'last1h');
 });
 
-test('account query functions default to the Beijing today window', () => {
+test('account query functions default to the last one hour window', () => {
   const query = source('src/lib/account-observability/query.ts');
-  assert.match(query, /getAccountOverview\([\s\S]*?windowKey: AccountWindowKey = 'today'/);
-  assert.match(query, /getAccountDetail\([\s\S]*?windowKey: AccountWindowKey = 'today'/);
+  assert.match(query, /getAccountOverview\([\s\S]*?windowKey: AccountWindowKey = 'last1h'/);
+  assert.match(query, /getAccountDetail\([\s\S]*?windowKey: AccountWindowKey = 'last1h'/);
 });
 
 test('status, platform, group, and search filters apply to the same account collection', () => {
@@ -79,6 +79,8 @@ test('overview aggregates raw counts and histograms and reports coverage for the
   assert.equal(result.trend[0].complete, true);
   assert.equal(result.trend[1].complete, false);
   assert.equal(result.accounts.length, 2);
+  assert.equal(result.accounts[0].alertEnabled, true, 'missing alertEnabled defaults to enabled');
+  assert.equal(result.accounts[1].alertEnabled, false, 'alertEnabled reflects the stored flag');
   assert.equal(result.openAlertCount, 2);
 });
 

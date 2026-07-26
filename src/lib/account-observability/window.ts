@@ -32,7 +32,7 @@ export function resolveAccountWindow(key: AccountWindowKey, now = new Date()): A
 }
 
 export function parseAccountWindow(value: string | null): AccountWindowKey {
-  const key = value ?? 'today';
+  const key = value ?? 'last1h';
   if (!ACCOUNT_WINDOW_KEYS.includes(key as AccountWindowKey)) throw new AccountQueryValidationError('invalid account window');
   return key as AccountWindowKey;
 }

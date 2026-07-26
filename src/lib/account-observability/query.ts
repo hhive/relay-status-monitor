@@ -14,6 +14,7 @@ interface AccountRow {
   syncState: string;
   groupProjection: unknown;
   lastSyncedAt?: Date | null;
+  alertEnabled?: boolean;
   probeEnabled?: boolean;
   probeStatus?: string | null;
   probeFreshAt?: Date | null;
@@ -225,6 +226,7 @@ export function buildAccountOverview(input: {
         syncState: account.syncState,
         groupProjection: account.groupProjection,
         lastSyncedAt: account.lastSyncedAt ?? null,
+        alertEnabled: account.alertEnabled ?? true,
         lastCompleteMinute: accountMinutes.at(-1)?.bucketStart ?? null,
         billingProbe: billingProbe(account),
         metrics: aggregate(accountMinutes),
@@ -236,7 +238,7 @@ export function buildAccountOverview(input: {
 }
 
 export async function getAccountOverview(
-  windowKey: AccountWindowKey = 'today',
+  windowKey: AccountWindowKey = 'last1h',
   filters: AccountFilters = DEFAULT_FILTERS,
   now = new Date(),
   client: AccountQueryClient = prisma as unknown as AccountQueryClient,
@@ -264,7 +266,7 @@ export async function listAccountSummaries() {
 
 export async function getAccountDetail(
   id: number,
-  windowKey: AccountWindowKey = 'today',
+  windowKey: AccountWindowKey = 'last1h',
   now = new Date(),
   client: AccountQueryClient = prisma as unknown as AccountQueryClient,
 ) {

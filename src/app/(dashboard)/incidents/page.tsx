@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, Bell, Check, CheckCircle2, Loader2 } from 'lucide-react';
+import { AlertTriangle, Bell, Check, CheckCircle2, Loader2, SlidersHorizontal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/page-header';
 import { apiFetch } from '@/lib/api-fetch';
+import { alertRuleConfigurationHref } from '@/lib/account-observability-ui';
 import { beginLatestRequest } from '@/lib/request-sequence';
 
 interface AccountAlertEvent {
@@ -147,12 +148,20 @@ export default function IncidentsPage() {
                       {event.resolvedAt ? ` · 恢复于 ${new Date(event.resolvedAt).toLocaleString('zh-CN')}` : ''}
                     </p>
                   </div>
-                  {!event.resolved && (
-                    <Button variant="outline" size="sm" disabled={resolvingId === event.id} onClick={() => void handleResolve(event.id)}>
-                      {resolvingId === event.id ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Check data-icon="inline-start" />}
-                      标记已解决
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button asChild variant="outline" size="sm">
+                      <Link href={alertRuleConfigurationHref(event)}>
+                        <SlidersHorizontal data-icon="inline-start" />
+                        配置规则
+                      </Link>
                     </Button>
-                  )}
+                    {!event.resolved && (
+                      <Button variant="outline" size="sm" disabled={resolvingId === event.id} onClick={() => void handleResolve(event.id)}>
+                        {resolvingId === event.id ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Check data-icon="inline-start" />}
+                        标记已解决
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </Card>
             ))}

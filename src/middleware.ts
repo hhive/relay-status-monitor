@@ -52,7 +52,7 @@ export async function middleware(request: NextRequest) {
 }
 
 function validAdminCsrf(request: NextRequest, expectedToken: string): boolean {
-  if (request.headers.get('origin') !== request.nextUrl.origin) return false;
+  if (request.headers.get('origin') !== expectedRequestOrigin(request)) return false;
   const suppliedToken = request.headers.get('x-csrf-token') ?? '';
   const encoder = new TextEncoder();
   const expected = encoder.encode(expectedToken);
@@ -64,6 +64,22 @@ function validAdminCsrf(request: NextRequest, expectedToken: string): boolean {
     difference |= expected[index] ^ (supplied[index] ?? 0);
   }
   return difference === 0;
+}
+
+function expectedRequestOrigin(request: NextRequest): string | null {
+  const forwardedProto = request.headers.get('x-forwarded-proto');
+  if (forwardedProto === null) return request.nextUrl.origin;
+  if (forwardedProto !== 'http' && forwardedProto !== 'https') return null;
+
+  const host = request.headers.get('host');
+  if (!host) return null;
+  try {
+    const externalUrl = new URL(`${forwardedProto}://${host}`);
+    if (externalUrl.username || externalUrl.password || externalUrl.pathname !== '/') return null;
+    return externalUrl.origin;
+  } catch {
+    return null;
+  }
 }
 
 function redirectToLogin(request: NextRequest) {

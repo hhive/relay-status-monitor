@@ -206,6 +206,49 @@ test('csrf rejects unsafe admin-session writes unless origin and token both matc
       }));
       assert.equal(response.headers.get('x-middleware-next'), '1', method);
     }
+
+    const proxyHeaders = {
+      cookie: `rsm_admin_session=${admin}`,
+      host: 'monitor.xiaoni-ai.top',
+      origin: 'https://monitor.xiaoni-ai.top',
+      'x-csrf-token': session.csrfToken,
+      'x-forwarded-proto': 'https',
+    };
+    const proxiedWrite = await middleware(new NextRequest(
+      'https://localhost:3305/api/alert-channels',
+      { method: 'POST', headers: proxyHeaders },
+    ));
+    assert.equal(proxiedWrite.headers.get('x-middleware-next'), '1', 'trusted proxy origin');
+
+    const proxyRejectionCases: Array<{ headers: Record<string, string>; label: string }> = [
+      {
+        headers: { ...proxyHeaders, origin: 'https://localhost:3305' },
+        label: 'internal standalone origin',
+      },
+      {
+        headers: {
+          ...proxyHeaders,
+          origin: 'https://evil.example',
+          'x-forwarded-host': 'evil.example',
+        },
+        label: 'untrusted forwarded host',
+      },
+      {
+        headers: { ...proxyHeaders, 'x-forwarded-proto': 'https,http' },
+        label: 'forwarded protocol chain',
+      },
+      {
+        headers: { ...proxyHeaders, 'x-forwarded-proto': 'javascript' },
+        label: 'invalid forwarded protocol',
+      },
+    ];
+    for (const item of proxyRejectionCases) {
+      const response = await middleware(new NextRequest(
+        'https://localhost:3305/api/alert-channels',
+        { method: 'POST', headers: item.headers },
+      ));
+      assert.equal(response.status, 403, item.label);
+    }
   } finally {
     if (previousSessionSecret === undefined) delete process.env.SESSION_SECRET;
     else process.env.SESSION_SECRET = previousSessionSecret;

@@ -64,6 +64,7 @@ export interface AccountSummaryDto {
   groupProjection: unknown;
   lastSyncedAt: string | null;
   lastCompleteMinute: string | null;
+  alertEnabled: boolean;
   billingProbe: AccountBillingProbeDto;
   metrics: AccountMetricAggregateDto;
 }
@@ -92,4 +93,23 @@ export interface AccountDetailDto extends AccountSummaryDto {
   summary: AccountOverviewDto['summary'];
   trend: AccountTrendPointDto[];
   minutes: AccountTrendPointDto[];
+}
+
+interface AlertRuleNavigationEvent {
+  metric: string;
+  account: { id: number };
+  rule: { id: number };
+}
+
+export function alertRuleConfigurationHref(event: AlertRuleNavigationEvent): string {
+  if (event.metric === 'upstream_rate_multiplier') {
+    return `/accounts/${event.account.id}#billing-alert-rule`;
+  }
+  return `/settings?rule=${event.rule.id}#rule-${event.rule.id}`;
+}
+
+export function parseAlertRuleTarget(value: string | null): number | null {
+  if (value === null || !/^[1-9]\d*$/.test(value)) return null;
+  const id = Number(value);
+  return Number.isSafeInteger(id) ? id : null;
 }

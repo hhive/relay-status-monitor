@@ -57,6 +57,15 @@ test('account overview and detail expose the approved operational controls and w
   assert.match(detail, /保存倍率告警/);
 });
 
+test('account alert master switch route is session guarded and delegates validated behavior', () => {
+  const route = readFileSync(new URL('../src/app/api/accounts/[id]/alert-enabled/route.ts', import.meta.url), 'utf8');
+  assert.match(route, /requireApiSession/);
+  assert.match(route, /getAccountAlertEnabled/);
+  assert.match(route, /putAccountAlertEnabled/);
+  assert.match(route, /alertEnabled: enabled/);
+  assert.doesNotMatch(route, /DATABASE_URL|credentials|password/i);
+});
+
 test('seed creates traffic defaults but leaves account multiplier alerts opt-in', () => {
   const seed = readFileSync(new URL('../prisma/seed.ts', import.meta.url), 'utf8');
   assert.match(seed, /defaultAccountRules/);

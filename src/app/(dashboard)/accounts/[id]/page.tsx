@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ChartNoAxesCombined, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { AccountTrendChart, type AccountTrendSeries } from '@/components/account-observability/account-trend-chart';
@@ -16,6 +16,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatAccountMetric, type AccountAggregateMetricKey } from '@/lib/account-metric-definitions';
 import type { AccountDetailDto, AccountTrendPointDto, AccountWindowKey } from '@/lib/account-observability-ui';
 import { formatAccountGroups } from '@/lib/account-observability/presentation';
+import { runAccountAlertToggle } from '@/lib/account-alert-toggle';
 import { apiFetch } from '@/lib/api-fetch';
 import { beginLatestRequest } from '@/lib/request-sequence';
 
@@ -38,22 +39,27 @@ const SUMMARY_KEYS: AccountAggregateMetricKey[] = ['availability', 'errorRate', 
 export default function AccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [accountId, setAccountId] = useState('');
   const [data, setData] = useState<AccountDetailDto | null>(null);
-  const [windowKey, setWindowKey] = useState<AccountWindowKey>('today');
+  const [windowKey, setWindowKey] = useState<AccountWindowKey>('last1h');
   const [trendView, setTrendView] = useState<keyof typeof DETAIL_TRENDS>('quality');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [alertEnabled, setAlertEnabled] = useState(false);
   const [alertThreshold, setAlertThreshold] = useState('');
+  const [masterAlertEnabled, setMasterAlertEnabled] = useState(true);
+  const [masterAlertPending, setMasterAlertPending] = useState(false);
   const [saving, setSaving] = useState(false);
+  const masterAlertPendingRef = useRef(new Set<number>());
   const requestSequence = useRef(0);
+  const billingAlertRuleRef = useRef<HTMLElement | null>(null);
+  const billingAlertRuleFocused = useRef(false);
 
   useEffect(() => { void params.then(({ id }) => setAccountId(id)); }, [params]);
 
-  useEffect(() => {
+  const fetchDetail = useCallback(async () => {
     if (!accountId) return;
     const isCurrent = beginLatestRequest(requestSequence);
     setLoading(true);
-    void apiFetch(`/api/accounts/${accountId}?window=${windowKey}`).then(async (response) => {
+    await apiFetch(`/api/accounts/${accountId}?window=${windowKey}`).then(async (response) => {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || '账号指标暂不可用');
       if (isCurrent()) { setData(body as AccountDetailDto); setError(null); }
@@ -61,6 +67,8 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
       if (isCurrent()) setError(reason instanceof Error ? reason.message : '账号指标暂不可用');
     }).finally(() => { if (isCurrent()) setLoading(false); });
   }, [accountId, windowKey]);
+
+  useEffect(() => { void fetchDetail(); }, [fetchDetail]);
 
   useEffect(() => {
     if (!accountId) return;
@@ -72,10 +80,43 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
     });
   }, [accountId]);
 
+  useEffect(() => { if (data) setMasterAlertEnabled(data.alertEnabled); }, [data]);
+
   const errorDistributions = useMemo(() => ({
     statuses: mergeDistribution(data?.trend ?? [], 'errorStatusCounts'),
     phases: mergeDistribution(data?.trend ?? [], 'errorPhaseCounts'),
   }), [data]);
+
+  async function toggleMasterAlert(enabled: boolean) {
+    const result = await runAccountAlertToggle({
+      accountId: Number(accountId),
+      previous: masterAlertEnabled,
+      requested: enabled,
+      pending: masterAlertPendingRef.current,
+      apply: setMasterAlertEnabled,
+      setPending: (_id, pending) => setMasterAlertPending(pending),
+      save: async (value) => {
+        const response = await apiFetch(`/api/accounts/${accountId}/alert-enabled`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: value }) });
+        const body = await response.json().catch(() => null) as { enabled?: unknown } | null;
+        if (!response.ok || typeof body?.enabled !== 'boolean') throw new Error();
+        return body.enabled;
+      },
+    });
+    if (result === 'saved') {
+      toast.success('账号告警开关已保存');
+      void fetchDetail();
+    }
+    if (result === 'failed') toast.error('账号告警开关保存失败');
+  }
+
+  useEffect(() => {
+    if (!data || billingAlertRuleFocused.current || window.location.hash !== '#billing-alert-rule') return;
+    const target = billingAlertRuleRef.current;
+    if (!target) return;
+    billingAlertRuleFocused.current = true;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.focus({ preventScroll: true });
+  }, [data]);
 
   async function saveBillingAlert() {
     const threshold = Number(alertThreshold);
@@ -118,7 +159,18 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
       {trendView === 'errors' ? <div className="grid gap-3 sm:grid-cols-2"><Distribution title="错误码分布" values={errorDistributions.statuses} /><Distribution title="错误阶段分布" values={errorDistributions.phases} /></div> : null}
     </section>
 
-    <section className="space-y-3 border-y py-4" aria-labelledby="billing-probe-heading">
+    <section className="space-y-2 border-y py-4" aria-labelledby="account-alert-heading">
+      <div className="flex flex-col gap-1"><h2 id="account-alert-heading" className="text-sm font-semibold">账号告警总开关</h2><p className="text-xs text-muted-foreground">关闭后该账号的全部告警（全局规则与倍率告警）都不再触发或推送。</p></div>
+      <label className="flex items-center gap-2 text-sm"><Switch checked={masterAlertEnabled} disabled={masterAlertPending} onCheckedChange={(value) => void toggleMasterAlert(value)} aria-label="账号告警总开关" />{masterAlertEnabled ? '告警已开启' : '告警已关闭'}</label>
+    </section>
+
+    <section
+      ref={billingAlertRuleRef}
+      id="billing-alert-rule"
+      tabIndex={-1}
+      className="scroll-mt-4 space-y-3 border-y py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      aria-labelledby="billing-probe-heading"
+    >
       <div className="flex flex-col gap-1"><h2 id="billing-probe-heading" className="text-sm font-semibold">上游倍率设置</h2><p className="text-xs text-muted-foreground">当前有效倍率：{data.billingProbe.currentEffectiveRate ?? '暂无数据'} · 最近成功：{formatBeijing(data.billingProbe.lastSuccessAt)} · 探测状态：{probeStale ? '已过期' : data.billingProbe.status ?? '未探测'}</p>{probeStale ? <p className="text-xs text-warning">保留最后倍率 {data.billingProbe.resolvedRateMultiplier ?? '暂无数据'}，过期快照不用于当前倍率或告警。</p> : null}</div>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center"><label className="flex items-center gap-2 text-sm"><Switch checked={alertEnabled} onCheckedChange={setAlertEnabled} />启用倍率告警</label><Input className="w-full sm:w-36" type="number" min="0" step="0.01" value={alertThreshold} onChange={(event) => setAlertThreshold(event.target.value)} placeholder="倍率告警阈值" /><Button onClick={() => void saveBillingAlert()} disabled={saving || !accountId}><Save data-icon="inline-start" />保存倍率告警</Button></div>
     </section>

@@ -52,6 +52,7 @@ model Sub2ApiAccount {
   tempUnschedulableReason    String?                @db.Text
   groupIds                   Json?
   groupProjection            Json?
+  alertEnabled               Boolean                @default(true)
   probeEnabled               Boolean                @default(false)
   probeStatus                String?
   probeFreshAt               DateTime?

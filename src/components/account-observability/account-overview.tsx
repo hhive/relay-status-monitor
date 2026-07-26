@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ChartNoAxesCombined, LayoutDashboard, RefreshCw, Search } from 'lucide-react';
+import { toast } from 'sonner';
 import { AccountTrendChart, type AccountTrendSeries } from './account-trend-chart';
 import { MetricDefinitionTooltip } from './metric-definition-tooltip';
 import { Badge } from '@/components/ui/badge';
@@ -10,11 +11,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/page-header';
 import { formatAccountMetric, type AccountAggregateMetricKey, type AccountMetricKey } from '@/lib/account-metric-definitions';
 import type { AccountOverviewDto, AccountStatusFilter, AccountSummaryDto, AccountWindowKey } from '@/lib/account-observability-ui';
 import { accountDataIsStale, formatAccountGroups } from '@/lib/account-observability/presentation';
+import { runAccountAlertToggle } from '@/lib/account-alert-toggle';
 import { apiFetch } from '@/lib/api-fetch';
 import { beginLatestRequest } from '@/lib/request-sequence';
 import { cn } from '@/lib/utils';
@@ -41,7 +44,7 @@ const SUMMARY_METRICS: AccountAggregateMetricKey[] = ['eligibleCount', 'availabi
 
 export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   const [data, setData] = useState<AccountOverviewDto | null>(null);
-  const [windowKey, setWindowKey] = useState<AccountWindowKey>('today');
+  const [windowKey, setWindowKey] = useState<AccountWindowKey>('last1h');
   const [status, setStatus] = useState<AccountStatusFilter>('schedulable');
   const [platform, setPlatform] = useState('');
   const [group, setGroup] = useState('');
@@ -51,6 +54,8 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAlertAccounts, setPendingAlertAccounts] = useState<Set<number>>(() => new Set());
+  const pendingAlertAccountsRef = useRef(new Set<number>());
   const requestSequence = useRef(0);
 
   useEffect(() => {
@@ -82,6 +87,34 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   }, [deferredSearch, group, platform, status, windowKey]);
 
   useEffect(() => { void fetchOverview(); }, [fetchOverview]);
+
+  const toggleAlert = useCallback(async (accountId: number, previous: boolean, enabled: boolean) => {
+    const patch = (value: boolean) => setData((prev) => prev
+      ? { ...prev, accounts: prev.accounts.map((account) => account.id === accountId ? { ...account, alertEnabled: value } : account) }
+      : prev);
+    const result = await runAccountAlertToggle({
+      accountId,
+      previous,
+      requested: enabled,
+      pending: pendingAlertAccountsRef.current,
+      apply: patch,
+      setPending: (id, pending) => setPendingAlertAccounts((current) => {
+        const next = new Set(current);
+        if (pending) next.add(id); else next.delete(id);
+        return next;
+      }),
+      save: async (value) => {
+        const response = await apiFetch(`/api/accounts/${accountId}/alert-enabled`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: value }),
+        });
+        const body = await response.json().catch(() => null) as { enabled?: unknown } | null;
+        if (!response.ok || typeof body?.enabled !== 'boolean') throw new Error();
+        return body.enabled;
+      },
+    });
+    if (result === 'saved') void fetchOverview();
+    if (result === 'failed') toast.error('账号告警开关保存失败');
+  }, [fetchOverview]);
 
   const platforms = useMemo(() => Array.from(new Set((data?.accounts ?? []).map((item) => item.platform).filter((value): value is string => Boolean(value)))).sort(), [data]);
   const PageIcon = listOnly ? ChartNoAxesCombined : LayoutDashboard;
@@ -139,7 +172,7 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
               <span className="text-xs text-muted-foreground">{data.summary.selectedAccountCount} 个账号</span>
             </div>
             <AccountFilters search={search} onSearch={setSearch} platform={platform} onPlatform={setPlatform} group={group} onGroup={setGroup} platforms={platforms} />
-            <AccountList data={data} />
+            <AccountList data={data} pendingAlertAccounts={pendingAlertAccounts} onToggleAlert={toggleAlert} />
           </section>
         </>
       ) : <div className="py-16 text-center text-sm text-muted-foreground">无法加载账号数据</div>}
@@ -168,24 +201,24 @@ function AccountFilters({ search, onSearch, platform, onPlatform, group, onGroup
   </div>;
 }
 
-function AccountList({ data }: { data: AccountOverviewDto }) {
+function AccountList({ data, pendingAlertAccounts, onToggleAlert }: { data: AccountOverviewDto; pendingAlertAccounts: Set<number>; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
   if (data.accounts.length === 0) return <div className="rounded-md border py-12 text-center text-sm text-muted-foreground">暂无账号数据</div>;
   return <>
     <div className="hidden max-h-[34rem] overflow-auto rounded-md border md:block">
-      <table className="w-full min-w-[1080px] text-sm">
+      <table className="w-full min-w-[1180px] text-sm">
         <thead className="sticky top-0 z-10 bg-card shadow-[0_1px_0_hsl(var(--border))]"><tr className="text-left">
           <th className="px-3 py-3 font-medium">账号</th><th className="px-3 py-3 font-medium">平台 / 分组</th><th className="px-3 py-3 font-medium">调度</th>
           {(['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'eligibleCount'] as AccountAggregateMetricKey[]).map((key) => <th key={key} className="px-3 py-3 font-medium"><MetricDefinitionTooltip metric={key} compact window={data.window} coverage={data.coverage} /></th>)}
-          <th className="px-3 py-3 font-medium">同步</th>
+          <th className="px-3 py-3 font-medium">同步</th><th className="px-3 py-3 font-medium">告警</th>
         </tr></thead>
-        <tbody>{data.accounts.map((account) => <AccountTableRow key={account.id} account={account} />)}</tbody>
+        <tbody>{data.accounts.map((account) => <AccountTableRow key={account.id} account={account} pending={pendingAlertAccounts.has(account.id)} onToggleAlert={onToggleAlert} />)}</tbody>
       </table>
     </div>
-    <div className="space-y-2 md:hidden">{data.accounts.map((account) => <AccountMobileRow key={account.id} account={account} window={data.window} coverage={data.coverage} />)}</div>
+    <div className="space-y-2 md:hidden">{data.accounts.map((account) => <AccountMobileRow key={account.id} account={account} window={data.window} coverage={data.coverage} pending={pendingAlertAccounts.has(account.id)} onToggleAlert={onToggleAlert} />)}</div>
   </>;
 }
 
-function AccountTableRow({ account }: { account: AccountSummaryDto }) {
+function AccountTableRow({ account, pending, onToggleAlert }: { account: AccountSummaryDto; pending: boolean; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
   const metrics = account.metrics;
   return <tr className="border-b last:border-0 hover:bg-muted/40">
     <td className="px-3 py-3"><Link href={`/accounts/${account.id}`} className="font-medium text-primary hover:underline">{account.name}</Link><div className="text-xs text-muted-foreground">{account.type ?? '未知类型'}</div></td>
@@ -193,14 +226,18 @@ function AccountTableRow({ account }: { account: AccountSummaryDto }) {
     <td className="px-3 py-3"><Badge variant={account.schedulable ? 'outline' : 'destructive'}>{account.schedulable ? '可调度' : '不可调度'}</Badge></td>
     {(['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'eligibleCount'] as AccountAggregateMetricKey[]).map((key) => <td key={key} className="whitespace-nowrap px-3 py-3 tabular-nums">{formatAccountMetric(key, metrics[key])}</td>)}
     <td className="px-3 py-3">{accountDataIsStale(account) ? <Badge variant="destructive">数据同步延迟</Badge> : <span className="whitespace-nowrap text-xs text-muted-foreground">{formatBeijing(account.lastSyncedAt)}</span>}</td>
+    <td className="px-3 py-3"><Switch checked={account.alertEnabled} disabled={pending} onCheckedChange={(value) => onToggleAlert(account.id, account.alertEnabled, value)} aria-label={`账号 ${account.name} 告警开关`} /></td>
   </tr>;
 }
 
-function AccountMobileRow({ account, window, coverage }: { account: AccountSummaryDto; window: AccountOverviewDto['window']; coverage: AccountOverviewDto['coverage'] }) {
+function AccountMobileRow({ account, window, coverage, pending, onToggleAlert }: { account: AccountSummaryDto; window: AccountOverviewDto['window']; coverage: AccountOverviewDto['coverage']; pending: boolean; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
   return <article className="rounded-md border bg-card p-3">
     <div className="flex min-w-0 items-start justify-between gap-2"><div className="min-w-0"><Link href={`/accounts/${account.id}`} className="block truncate font-medium text-primary">{account.name}</Link><p className="truncate text-xs text-muted-foreground">{account.platform ?? '未知平台'} · {formatAccountGroups(account.groupProjection)}</p></div><Badge variant={account.schedulable ? 'outline' : 'destructive'} className="shrink-0">{account.schedulable ? '可调度' : '不可调度'}</Badge></div>
     <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">{(['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd'] as AccountAggregateMetricKey[]).map((key) => <div key={key} className="min-w-0"><dt><MetricDefinitionTooltip metric={key} compact window={window} coverage={coverage} /></dt><dd className="truncate font-medium tabular-nums">{formatAccountMetric(key, account.metrics[key])}</dd></div>)}</dl>
-    <div className="mt-3 text-xs text-muted-foreground">{accountDataIsStale(account) ? <span className="text-destructive">数据同步延迟</span> : `同步 ${formatBeijing(account.lastSyncedAt)}`}</div>
+    <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+      <span>{accountDataIsStale(account) ? <span className="text-destructive">数据同步延迟</span> : `同步 ${formatBeijing(account.lastSyncedAt)}`}</span>
+      <label className="flex items-center gap-2"><span>告警</span><Switch checked={account.alertEnabled} disabled={pending} onCheckedChange={(value) => onToggleAlert(account.id, account.alertEnabled, value)} aria-label={`账号 ${account.name} 告警开关`} /></label>
+    </div>
   </article>;
 }
 

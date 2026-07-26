@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   BellRing,
   MessageSquare,
@@ -46,6 +46,7 @@ import { resolveRuleNumberDraft } from '@/lib/rule-number-draft';
 import { buildSettingsUpdatePayload } from '@/lib/settings-form';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api-fetch';
+import { parseAlertRuleTarget } from '@/lib/account-observability-ui';
 
 interface AlertRule {
   id: number;
@@ -135,6 +136,8 @@ function RulesTab() {
   const [drafts, setDrafts] = useState<RuleDrafts>({});
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [targetRuleId, setTargetRuleId] = useState<number | null>(null);
+  const scrolledRuleId = useRef<number | null>(null);
 
   const fetchRules = useCallback(async () => {
     setLoading(true);
@@ -155,6 +158,19 @@ function RulesTab() {
   useEffect(() => {
     fetchRules();
   }, [fetchRules]);
+
+  useEffect(() => {
+    setTargetRuleId(parseAlertRuleTarget(new URLSearchParams(window.location.search).get('rule')));
+  }, []);
+
+  useEffect(() => {
+    if (loading || targetRuleId === null || scrolledRuleId.current === targetRuleId) return;
+    if (!rules.some((rule) => rule.id === targetRuleId)) return;
+    const target = document.getElementById(`rule-${targetRuleId}`);
+    if (!target) return;
+    scrolledRuleId.current = targetRuleId;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [loading, rules, targetRuleId]);
 
   async function toggleRule(rule: AlertRule) {
     setUpdatingId(rule.id);
@@ -254,7 +270,15 @@ function RulesTab() {
         </Card>
       ) : (
         rules.map((r) => (
-          <Card key={r.id} className={cn(updatingId === r.id && 'opacity-70')}>
+          <Card
+            key={r.id}
+            id={`rule-${r.id}`}
+            className={cn(
+              'scroll-mt-4',
+              updatingId === r.id && 'opacity-70',
+              targetRuleId === r.id && 'border-primary ring-1 ring-primary/30',
+            )}
+          >
             <CardContent className="p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">

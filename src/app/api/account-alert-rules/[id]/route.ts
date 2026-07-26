@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db';
 import { parseStrictPositiveInteger } from '@/lib/security';
 import {
   AccountAlertValidationError,
-  isGlobalAccountAlertMetric,
+  normalizeGlobalAccountAlertMetric,
   parseAccountAlertRuleUpdate,
   toAccountAlertRuleDto,
 } from '@/lib/account-observability/alert-management';
@@ -16,10 +16,11 @@ async function updateRule(request: Request, context: Context) {
   if (id === null) return NextResponse.json({ error: '规则 ID 无效' }, { status: 400 });
   try {
     const existing = await prisma.accountAlertRule.findFirst({ where: { id, accountId: null } });
-    if (!existing || !isGlobalAccountAlertMetric(existing.metric)) {
+    const metric = existing ? normalizeGlobalAccountAlertMetric(existing.metric) : null;
+    if (!existing || !metric) {
       return NextResponse.json({ error: '账号告警规则不存在' }, { status: 404 });
     }
-    const update = parseAccountAlertRuleUpdate(existing.metric, await request.json().catch(() => null));
+    const update = parseAccountAlertRuleUpdate(metric, await request.json().catch(() => null));
     const rule = await prisma.accountAlertRule.update({ where: { id }, data: update });
     return NextResponse.json(toAccountAlertRuleDto(rule));
   } catch (error) {

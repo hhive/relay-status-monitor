@@ -14,6 +14,19 @@ export type GlobalAccountAlertMetric = typeof ACCOUNT_ALERT_RULE_SPECS[number]['
 export type AccountAlertEventMetric = GlobalAccountAlertMetric | 'upstream_rate_multiplier';
 export type AlertSeverity = 'INFO' | 'WARNING' | 'CRITICAL';
 
+const LEGACY_GLOBAL_ACCOUNT_ALERT_METRICS = {
+  availability: 'availability_low',
+  error_rate: 'error_rate_high',
+  duration_p95: 'duration_p95_high',
+  first_token_p95: 'first_token_p95_high',
+  cache_hit_rate: 'cache_hit_low',
+} as const satisfies Record<string, GlobalAccountAlertMetric>;
+
+export const ACCOUNT_ALERT_RULE_STORAGE_METRICS = [
+  ...ACCOUNT_ALERT_RULE_SPECS.map(({ metric }) => metric),
+  ...Object.keys(LEGACY_GLOBAL_ACCOUNT_ALERT_METRICS),
+];
+
 const RULE_UPDATE_FIELDS = new Set([
   'operator', 'threshold', 'severity', 'minRequests', 'minPromptTokens', 'cooldownMin', 'enabled',
 ]);
@@ -35,6 +48,11 @@ function nonNegativeInteger(value: unknown, maximum: number): value is number {
 
 export function isGlobalAccountAlertMetric(value: string): value is GlobalAccountAlertMetric {
   return ACCOUNT_ALERT_RULE_SPECS.some(({ metric }) => metric === value);
+}
+
+export function normalizeGlobalAccountAlertMetric(value: string): GlobalAccountAlertMetric | null {
+  if (isGlobalAccountAlertMetric(value)) return value;
+  return LEGACY_GLOBAL_ACCOUNT_ALERT_METRICS[value as keyof typeof LEGACY_GLOBAL_ACCOUNT_ALERT_METRICS] ?? null;
 }
 
 export interface AccountAlertRuleUpdate {
@@ -118,7 +136,7 @@ interface RuleDtoInput {
 
 export function toAccountAlertRuleDto<T extends RuleDtoInput>(rule: T) {
   return {
-    id: rule.id, name: rule.name, metric: rule.metric, operator: rule.operator,
+    id: rule.id, name: rule.name, metric: normalizeGlobalAccountAlertMetric(rule.metric) ?? rule.metric, operator: rule.operator,
     threshold: rule.threshold, severity: rule.severity, minRequests: rule.minRequests,
     minPromptTokens: rule.minPromptTokens, cooldownMin: rule.cooldownMin, enabled: rule.enabled,
   };

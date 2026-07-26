@@ -31,7 +31,7 @@ test('root overview and account list use the server-authoritative overview respo
   assert.doesNotMatch(dashboard, /\/api\/dashboard|upstreamKeyId/);
   assert.match(accounts, /AccountOverview/);
   assert.match(shared, /\/api\/accounts\/overview\?/);
-  assert.match(shared, /useState<AccountWindowKey>\('today'\)/);
+  assert.match(shared, /useState<AccountWindowKey>\('last1h'\)/);
   assert.match(shared, /useState<AccountStatusFilter>\('schedulable'\)/);
   assert.match(shared, /params\.set\('platform'/);
   assert.match(shared, /params\.set\('group'/);
@@ -42,9 +42,24 @@ test('root overview and account list use the server-authoritative overview respo
   assert.ok(firstTokenListUses.length >= 4, 'first Token P95 must appear in summary, trend, desktop list, and mobile list');
 });
 
+test('account list and detail expose a per-account alert master switch', () => {
+  const shared = source('src/components/account-observability/account-overview.tsx');
+  assert.match(shared, /alert-enabled/);
+  assert.match(shared, /Switch/);
+  assert.match(shared, /account\.alertEnabled/);
+  assert.match(shared, /告警/);
+  assert.match(shared, /result === 'saved'[\s\S]*?fetchOverview\(\)/, 'a successful toggle must supersede stale overview requests');
+
+  const detail = source('src/app/(dashboard)/accounts/[id]/page.tsx');
+  assert.match(detail, /masterAlertEnabled/);
+  assert.match(detail, /\/api\/accounts\/\$\{accountId\}\/alert-enabled/);
+  assert.match(detail, /告警总开关/);
+  assert.match(detail, /result === 'saved'[\s\S]*?fetchDetail\(\)/, 'a successful toggle must supersede stale detail requests');
+});
+
 test('account detail requests each selected window and exposes five trend views plus minute details', () => {
   const detail = source('src/app/(dashboard)/accounts/[id]/page.tsx');
-  assert.match(detail, /useState<AccountWindowKey>\('today'\)/);
+  assert.match(detail, /useState<AccountWindowKey>\('last1h'\)/);
   assert.match(detail, /\/api\/accounts\/\$\{accountId\}\?window=\$\{windowKey\}/);
   assert.doesNotMatch(detail, /data\.trend\.filter/);
   for (const label of ['流量质量', '延迟', '缓存', '计费', '错误分布', '分钟明细']) {

@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
 import { requireApiSession } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { ACCOUNT_ALERT_RULE_SPECS, toAccountAlertRuleDto } from '@/lib/account-observability/alert-management';
+import { ACCOUNT_ALERT_RULE_STORAGE_METRICS, toAccountAlertRuleDto } from '@/lib/account-observability/alert-management';
 
 export async function GET() {
   const auth = await requireApiSession();
   if (!auth.ok) return auth.response;
   try {
     const rules = await prisma.accountAlertRule.findMany({
-      where: { accountId: null, metric: { in: ACCOUNT_ALERT_RULE_SPECS.map(({ metric }) => metric) } },
+      where: { accountId: null, metric: { in: ACCOUNT_ALERT_RULE_STORAGE_METRICS } },
       orderBy: { id: 'asc' },
     });
     return NextResponse.json(rules.map(toAccountAlertRuleDto));
