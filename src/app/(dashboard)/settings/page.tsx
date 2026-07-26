@@ -420,7 +420,7 @@ function ChannelsTab() {
     if (!webhookUrl) return;
     setSaving(true);
     try {
-      await apiFetch('/api/alert-channels', {
+      const response = await apiFetch('/api/alert-channels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -430,9 +430,16 @@ function ChannelsTab() {
           enabled: true,
         }),
       });
+      const data = await response.json().catch(() => ({})) as { error?: unknown };
+      if (!response.ok) {
+        throw new Error(typeof data.error === 'string' ? data.error : '通知渠道保存失败');
+      }
+      toast.success('通知渠道已保存');
       resetForm();
       setDialogOpen(false);
       await fetchChannels();
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : '通知渠道保存失败');
     } finally {
       setSaving(false);
     }

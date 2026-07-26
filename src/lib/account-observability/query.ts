@@ -236,7 +236,7 @@ export function buildAccountOverview(input: {
 }
 
 export async function getAccountOverview(
-  windowKey: AccountWindowKey = 'last24h',
+  windowKey: AccountWindowKey = 'today',
   filters: AccountFilters = DEFAULT_FILTERS,
   now = new Date(),
   client: AccountQueryClient = prisma as unknown as AccountQueryClient,
@@ -259,12 +259,12 @@ export async function getAccountOverview(
 }
 
 export async function listAccountSummaries() {
-  return (await getAccountOverview('last24h', { ...DEFAULT_FILTERS, status: 'all' })).accounts;
+  return (await getAccountOverview('today', { ...DEFAULT_FILTERS, status: 'all' })).accounts;
 }
 
 export async function getAccountDetail(
   id: number,
-  windowKey: AccountWindowKey = 'last24h',
+  windowKey: AccountWindowKey = 'today',
   now = new Date(),
   client: AccountQueryClient = prisma as unknown as AccountQueryClient,
 ) {

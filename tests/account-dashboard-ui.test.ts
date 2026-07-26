@@ -31,17 +31,20 @@ test('root overview and account list use the server-authoritative overview respo
   assert.doesNotMatch(dashboard, /\/api\/dashboard|upstreamKeyId/);
   assert.match(accounts, /AccountOverview/);
   assert.match(shared, /\/api\/accounts\/overview\?/);
-  assert.match(shared, /useState<AccountWindowKey>\('last24h'\)/);
+  assert.match(shared, /useState<AccountWindowKey>\('today'\)/);
   assert.match(shared, /useState<AccountStatusFilter>\('schedulable'\)/);
   assert.match(shared, /params\.set\('platform'/);
   assert.match(shared, /params\.set\('group'/);
   assert.match(shared, /params\.set\('search'/);
   assert.match(shared, /sticky top-0/);
   assert.match(shared, /md:hidden/);
+  const firstTokenListUses = shared.match(/'firstTokenP95Ms'/g) ?? [];
+  assert.ok(firstTokenListUses.length >= 4, 'first Token P95 must appear in summary, trend, desktop list, and mobile list');
 });
 
 test('account detail requests each selected window and exposes five trend views plus minute details', () => {
   const detail = source('src/app/(dashboard)/accounts/[id]/page.tsx');
+  assert.match(detail, /useState<AccountWindowKey>\('today'\)/);
   assert.match(detail, /\/api\/accounts\/\$\{accountId\}\?window=\$\{windowKey\}/);
   assert.doesNotMatch(detail, /data\.trend\.filter/);
   for (const label of ['流量质量', '延迟', '缓存', '计费', '错误分布', '分钟明细']) {
@@ -50,6 +53,16 @@ test('account detail requests each selected window and exposes five trend views 
   assert.match(detail, /<details/);
   assert.match(detail, /数据不完整/);
   assert.match(detail, /promptTokens/);
+});
+
+test('notification channel save reports API failures and successful creation', () => {
+  const settings = source('src/app/(dashboard)/settings/page.tsx');
+  const handleAdd = settings.match(/async function handleAdd\(\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+
+  assert.match(handleAdd, /if \(!response\.ok\)/);
+  assert.match(handleAdd, /toast\.error/);
+  assert.match(handleAdd, /toast\.success/);
+  assert.match(handleAdd, /setDialogOpen\(false\)/);
 });
 
 test('shared trend and definition tooltip keep gaps and expose keyboard semantics', () => {

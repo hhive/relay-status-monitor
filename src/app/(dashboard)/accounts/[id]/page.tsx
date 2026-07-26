@@ -38,7 +38,7 @@ const SUMMARY_KEYS: AccountAggregateMetricKey[] = ['availability', 'errorRate', 
 export default function AccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [accountId, setAccountId] = useState('');
   const [data, setData] = useState<AccountDetailDto | null>(null);
-  const [windowKey, setWindowKey] = useState<AccountWindowKey>('last24h');
+  const [windowKey, setWindowKey] = useState<AccountWindowKey>('today');
   const [trendView, setTrendView] = useState<keyof typeof DETAIL_TRENDS>('quality');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

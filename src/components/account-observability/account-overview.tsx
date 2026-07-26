@@ -41,7 +41,7 @@ const SUMMARY_METRICS: AccountAggregateMetricKey[] = ['eligibleCount', 'availabi
 
 export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   const [data, setData] = useState<AccountOverviewDto | null>(null);
-  const [windowKey, setWindowKey] = useState<AccountWindowKey>('last24h');
+  const [windowKey, setWindowKey] = useState<AccountWindowKey>('today');
   const [status, setStatus] = useState<AccountStatusFilter>('schedulable');
   const [platform, setPlatform] = useState('');
   const [group, setGroup] = useState('');
@@ -175,7 +175,7 @@ function AccountList({ data }: { data: AccountOverviewDto }) {
       <table className="w-full min-w-[1080px] text-sm">
         <thead className="sticky top-0 z-10 bg-card shadow-[0_1px_0_hsl(var(--border))]"><tr className="text-left">
           <th className="px-3 py-3 font-medium">账号</th><th className="px-3 py-3 font-medium">平台 / 分组</th><th className="px-3 py-3 font-medium">调度</th>
-          {(['availability', 'errorRate', 'durationP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'eligibleCount'] as AccountAggregateMetricKey[]).map((key) => <th key={key} className="px-3 py-3 font-medium"><MetricDefinitionTooltip metric={key} compact window={data.window} coverage={data.coverage} /></th>)}
+          {(['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'eligibleCount'] as AccountAggregateMetricKey[]).map((key) => <th key={key} className="px-3 py-3 font-medium"><MetricDefinitionTooltip metric={key} compact window={data.window} coverage={data.coverage} /></th>)}
           <th className="px-3 py-3 font-medium">同步</th>
         </tr></thead>
         <tbody>{data.accounts.map((account) => <AccountTableRow key={account.id} account={account} />)}</tbody>
@@ -191,7 +191,7 @@ function AccountTableRow({ account }: { account: AccountSummaryDto }) {
     <td className="px-3 py-3"><Link href={`/accounts/${account.id}`} className="font-medium text-primary hover:underline">{account.name}</Link><div className="text-xs text-muted-foreground">{account.type ?? '未知类型'}</div></td>
     <td className="max-w-56 px-3 py-3"><div>{account.platform ?? '未知平台'}</div><div className="truncate text-xs text-muted-foreground">{formatAccountGroups(account.groupProjection)}</div></td>
     <td className="px-3 py-3"><Badge variant={account.schedulable ? 'outline' : 'destructive'}>{account.schedulable ? '可调度' : '不可调度'}</Badge></td>
-    {(['availability', 'errorRate', 'durationP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'eligibleCount'] as AccountAggregateMetricKey[]).map((key) => <td key={key} className="whitespace-nowrap px-3 py-3 tabular-nums">{formatAccountMetric(key, metrics[key])}</td>)}
+    {(['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'eligibleCount'] as AccountAggregateMetricKey[]).map((key) => <td key={key} className="whitespace-nowrap px-3 py-3 tabular-nums">{formatAccountMetric(key, metrics[key])}</td>)}
     <td className="px-3 py-3">{accountDataIsStale(account) ? <Badge variant="destructive">数据同步延迟</Badge> : <span className="whitespace-nowrap text-xs text-muted-foreground">{formatBeijing(account.lastSyncedAt)}</span>}</td>
   </tr>;
 }
@@ -199,7 +199,7 @@ function AccountTableRow({ account }: { account: AccountSummaryDto }) {
 function AccountMobileRow({ account, window, coverage }: { account: AccountSummaryDto; window: AccountOverviewDto['window']; coverage: AccountOverviewDto['coverage'] }) {
   return <article className="rounded-md border bg-card p-3">
     <div className="flex min-w-0 items-start justify-between gap-2"><div className="min-w-0"><Link href={`/accounts/${account.id}`} className="block truncate font-medium text-primary">{account.name}</Link><p className="truncate text-xs text-muted-foreground">{account.platform ?? '未知平台'} · {formatAccountGroups(account.groupProjection)}</p></div><Badge variant={account.schedulable ? 'outline' : 'destructive'} className="shrink-0">{account.schedulable ? '可调度' : '不可调度'}</Badge></div>
-    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">{(['availability', 'errorRate', 'durationP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd'] as AccountAggregateMetricKey[]).map((key) => <div key={key} className="min-w-0"><dt><MetricDefinitionTooltip metric={key} compact window={window} coverage={coverage} /></dt><dd className="truncate font-medium tabular-nums">{formatAccountMetric(key, account.metrics[key])}</dd></div>)}</dl>
+    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">{(['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd'] as AccountAggregateMetricKey[]).map((key) => <div key={key} className="min-w-0"><dt><MetricDefinitionTooltip metric={key} compact window={window} coverage={coverage} /></dt><dd className="truncate font-medium tabular-nums">{formatAccountMetric(key, account.metrics[key])}</dd></div>)}</dl>
     <div className="mt-3 text-xs text-muted-foreground">{accountDataIsStale(account) ? <span className="text-destructive">数据同步延迟</span> : `同步 ${formatBeijing(account.lastSyncedAt)}`}</div>
   </article>;
 }

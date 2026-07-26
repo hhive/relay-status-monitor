@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { filterAccounts, parseAccountFilters } from '../src/lib/account-observability/filters';
 import { buildAccountOverview, getAccountDetail } from '../src/lib/account-observability/query';
-import { resolveAccountWindow } from '../src/lib/account-observability/window';
+import { parseAccountWindow, resolveAccountWindow } from '../src/lib/account-observability/window';
+
+function source(path: string): string {
+  return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+}
 
 const accounts = [
   { id: 1, name: 'Alpha', platform: 'openai', syncState: 'ACTIVE', schedulable: true, groupProjection: [{ id: 7, name: 'Premium' }] },
@@ -20,6 +25,13 @@ test('server windows end at the latest complete minute and reject unknown keys',
   assert.equal(resolveAccountWindow('last24h', now).expectedMinutes, 1440);
   assert.equal(resolveAccountWindow('today', now).start.toISOString(), '2026-07-24T16:00:00.000Z');
   assert.throws(() => resolveAccountWindow('week' as never, now), /window/i);
+  assert.equal(parseAccountWindow(null), 'today');
+});
+
+test('account query functions default to the Beijing today window', () => {
+  const query = source('src/lib/account-observability/query.ts');
+  assert.match(query, /getAccountOverview\([\s\S]*?windowKey: AccountWindowKey = 'today'/);
+  assert.match(query, /getAccountDetail\([\s\S]*?windowKey: AccountWindowKey = 'today'/);
 });
 
 test('status, platform, group, and search filters apply to the same account collection', () => {
