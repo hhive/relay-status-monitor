@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TABLE "AccountAlertEvent"
+ADD COLUMN "recoveryNormalCount" INTEGER NOT NULL DEFAULT 0;
+
+COMMIT;

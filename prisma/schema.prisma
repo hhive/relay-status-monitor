@@ -164,6 +164,7 @@ model AccountAlertEvent {
   metricValue Float?
   message     String           @db.Text
   notificationDeliveries Json?
+  recoveryNormalCount Int      @default(0)
   resolved    Boolean          @default(false)
   resolvedAt  DateTime?
   createdAt   DateTime         @default(now())

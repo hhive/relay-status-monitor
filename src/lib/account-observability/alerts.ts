@@ -72,6 +72,7 @@ export interface AccountAlertEventRecord {
   metricValue?: number | null;
   message: string;
   notificationDeliveries?: unknown;
+  recoveryNormalCount: number;
 }
 
 interface NewAccountAlertEvent extends Omit<AccountAlertEventRecord, 'id' | 'notificationDeliveries'> {
@@ -89,6 +90,7 @@ export interface AccountAlertDependencies {
   findRecentEvent: (accountId: number, ruleId: number, since: Date) => Promise<AccountAlertEventRecord | null>;
   createEvent: (event: NewAccountAlertEvent) => Promise<AccountAlertEventRecord>;
   updateNotificationDeliveries: (id: number, deliveries: NotificationDeliveries) => Promise<void>;
+  updateRecoveryNormalCount: (id: number, count: number) => Promise<void>;
   resolveEvent: (id: number, at: Date) => Promise<void>;
   notify: (
     event: AccountAlertEventRecord,
@@ -130,6 +132,21 @@ async function notifyEvent(
     await dependencies.updateNotificationDeliveries(event.id, deliveries);
     event.notificationDeliveries = deliveries;
   });
+}
+
+function boundedRecoveryNormalCount(value: number): number {
+  return Number.isSafeInteger(value) ? Math.max(0, Math.min(2, value)) : 0;
+}
+
+async function setRecoveryNormalCount(
+  dependencies: AccountAlertDependencies,
+  event: AccountAlertEventRecord,
+  count: number,
+): Promise<void> {
+  const next = boundedRecoveryNormalCount(count);
+  if (next === event.recoveryNormalCount) return;
+  await dependencies.updateRecoveryNormalCount(event.id, next);
+  event.recoveryNormalCount = next;
 }
 
 export function evaluateAccountMetricAlert(input: {
@@ -245,18 +262,24 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
         if (rule.accountId != null && rule.accountId !== account.id) continue;
         const result = evaluateRule(rule, account, now, latestMetricBucketStart);
         const open = await dependencies.findOpenEvent(account.id, rule.id);
-        if (!result.available) continue;
-        if (!result.triggered) {
-          if (open) {
-            if (open.notificationDeliveries != null) {
-              await notifyEvent(dependencies, open, account, false);
-            }
-            await notifyEvent(dependencies, open, account, true);
-            await dependencies.resolveEvent(open.id, now);
-          }
+        if (!result.available) {
+          if (open) await setRecoveryNormalCount(dependencies, open, 0);
           continue;
         }
+        if (!result.triggered && open) {
+          const normalCount = Math.min(2, boundedRecoveryNormalCount(open.recoveryNormalCount) + 1);
+          await setRecoveryNormalCount(dependencies, open, normalCount);
+          if (normalCount < 2) continue;
+          if (open.notificationDeliveries != null) {
+            await notifyEvent(dependencies, open, account, false);
+          }
+          await notifyEvent(dependencies, open, account, true);
+          await dependencies.resolveEvent(open.id, now);
+          continue;
+        }
+        if (!result.triggered) continue;
         if (open) {
+          await setRecoveryNormalCount(dependencies, open, 0);
           if (open.notificationDeliveries != null) {
             await notifyEvent(dependencies, open, account, false);
           }
@@ -269,6 +292,7 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
           severity: rule.severity ?? 'WARNING', metricValue: result.value,
           message: `[${account.name}] ${metricLabel(rule.metric)} ${result.value ?? '-'} ${rule.operator} ${rule.threshold}`,
           notificationDeliveries: { trigger: [], recovery: [] },
+          recoveryNormalCount: 0,
           createdAt: now,
         });
         await notifyEvent(dependencies, event, account, false);
@@ -302,6 +326,9 @@ export async function evaluateAccountAlerts(now = new Date()): Promise<void> {
         where: { id },
         data: { notificationDeliveries: notificationDeliveries as Prisma.InputJsonValue },
       });
+    },
+    updateRecoveryNormalCount: async (id, recoveryNormalCount) => {
+      await prisma.accountAlertEvent.update({ where: { id }, data: { recoveryNormalCount } });
     },
     resolveEvent: async (id, at) => { await prisma.accountAlertEvent.update({ where: { id }, data: { resolved: true, resolvedAt: at } }); },
     notify: async (event, account, recovery, deliveredChannelIds, onDelivered) =>

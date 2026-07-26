@@ -74,6 +74,19 @@ test('Prisma schema retains account and shared models but removes exact legacy m
   assert.match(schema, /model AccountAlertEvent[\s\S]*notificationDeliveries\s+Json\?/);
 });
 
+test('account alert recovery confirmation uses a persisted counter and additive migration', () => {
+  const schema = source('prisma/schema.prisma');
+  assert.match(schema, /model AccountAlertEvent[\s\S]*recoveryNormalCount\s+Int\s+@default\(0\)/);
+
+  const migration = source('prisma/migrations/20260726130000_add_alert_recovery_normal_count/migration.sql');
+  assert.match(migration, /^BEGIN;$/m);
+  assert.match(migration, /ALTER TABLE "AccountAlertEvent"\s+ADD COLUMN "recoveryNormalCount" INTEGER NOT NULL DEFAULT 0;/);
+  assert.match(migration, /^COMMIT;$/m);
+  assert.ok(migration.indexOf('BEGIN;') < migration.indexOf('ALTER TABLE'));
+  assert.ok(migration.lastIndexOf('COMMIT;') > migration.lastIndexOf('ALTER TABLE'));
+  assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN|SCHEMA|DATABASE)|CASCADE/i);
+});
+
 test('destructive migration drops exactly the five approved legacy tables', () => {
   const migration = source('prisma/migrations/20260725000000_remove_legacy_upstream/migration.sql');
   const dropped = Array.from(migration.matchAll(/DROP TABLE\s+(?:IF EXISTS\s+)?"([^"]+)"/gi), (match) => match[1]).sort();
