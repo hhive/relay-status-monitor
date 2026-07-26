@@ -67,6 +67,13 @@ test('shared trend and definition tooltip keep gaps and expose keyboard semantic
   assert.doesNotMatch(tooltip, /title=/);
 });
 
+test('root layout provides the global tooltip context used by dashboard metrics', () => {
+  const layout = source('src/app/layout.tsx');
+
+  assert.match(layout, /TooltipProvider/);
+  assert.match(layout, /<TooltipProvider[^>]*>\s*\{children\}/);
+});
+
 test('dashboard navigation contains accounts and no upstream management entry', () => {
   const layout = source('src/app/(dashboard)/layout.tsx');
   assert.match(layout, /href: '\/accounts', label: '账号'/);
