@@ -22,6 +22,8 @@ test('server rebuild command requires explicit UTC bounds and reuses production 
   assert.match(command, /--start/);
   assert.match(command, /--end/);
   assert.match(command, /runAccountMetricRebuild/);
+  assert.match(command, /async function main\(\)/);
+  assert.match(command, /main\(\)\.catch/);
   assert.match(collector, /productionMetricRunner\(client, 'REBUILD'\)/);
 });
 

@@ -18,7 +18,14 @@ function utcDate(value: string, name: string): Date {
   return parsed;
 }
 
-const start = utcDate(argument('--start'), '--start');
-const end = utcDate(argument('--end'), '--end');
-const result = await runAccountMetricRebuild(start, end);
-console.log(JSON.stringify(result));
+async function main(): Promise<void> {
+  const start = utcDate(argument('--start'), '--start');
+  const end = utcDate(argument('--end'), '--end');
+  const result = await runAccountMetricRebuild(start, end);
+  console.log(JSON.stringify(result));
+}
+
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});
