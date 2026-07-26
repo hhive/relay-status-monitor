@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChartNoAxesCombined, LayoutDashboard, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, ChartNoAxesCombined, LayoutDashboard, RefreshCw, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { AccountTrendChart, type AccountTrendSeries } from './account-trend-chart';
 import { MetricDefinitionTooltip } from './metric-definition-tooltip';
@@ -13,7 +13,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PageHeader } from '@/components/page-header';
+import {
+  ACCOUNT_SORT_KEYS,
+  ACCOUNT_SORT_LABELS,
+  DEFAULT_ACCOUNT_SORT,
+  readAccountSortStateSafely,
+  sortAccountSummaries,
+  writeAccountSortStateSafely,
+  type AccountSortKey,
+  type AccountSortState,
+} from '@/lib/account-list-sort';
 import { formatAccountMetric, type AccountAggregateMetricKey, type AccountMetricKey } from '@/lib/account-metric-definitions';
 import type { AccountOverviewDto, AccountStatusFilter, AccountSummaryDto, AccountWindowKey } from '@/lib/account-observability-ui';
 import { accountDataIsStale, formatAccountGroups } from '@/lib/account-observability/presentation';
@@ -55,6 +66,7 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingAlertAccounts, setPendingAlertAccounts] = useState<Set<number>>(() => new Set());
+  const [sortState, setSortState] = useState<AccountSortState>(DEFAULT_ACCOUNT_SORT);
   const pendingAlertAccountsRef = useRef(new Set<number>());
   const requestSequence = useRef(0);
 
@@ -62,6 +74,8 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
     const timer = window.setTimeout(() => setDeferredSearch(search.trim()), 250);
     return () => window.clearTimeout(timer);
   }, [search]);
+
+  useEffect(() => setSortState(readAccountSortStateSafely(() => window.localStorage)), []);
 
   const fetchOverview = useCallback(async () => {
     const isCurrent = beginLatestRequest(requestSequence);
@@ -117,6 +131,16 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   }, [fetchOverview]);
 
   const platforms = useMemo(() => Array.from(new Set((data?.accounts ?? []).map((item) => item.platform).filter((value): value is string => Boolean(value)))).sort(), [data]);
+  const sortedAccounts = useMemo(() => sortAccountSummaries(data?.accounts ?? [], sortState), [data?.accounts, sortState]);
+  const updateSort = useCallback((next: AccountSortState) => {
+    setSortState(next);
+    writeAccountSortStateSafely(() => window.localStorage, next);
+  }, []);
+  const toggleSortKey = useCallback((key: AccountSortKey) => {
+    updateSort(sortState.key === key
+      ? { key, order: sortState.order === 'asc' ? 'desc' : 'asc' }
+      : { key, order: 'asc' });
+  }, [sortState, updateSort]);
   const PageIcon = listOnly ? ChartNoAxesCombined : LayoutDashboard;
   const title = listOnly ? '账号' : '总览';
 
@@ -172,7 +196,7 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
               <span className="text-xs text-muted-foreground">{data.summary.selectedAccountCount} 个账号</span>
             </div>
             <AccountFilters search={search} onSearch={setSearch} platform={platform} onPlatform={setPlatform} group={group} onGroup={setGroup} platforms={platforms} />
-            <AccountList data={data} pendingAlertAccounts={pendingAlertAccounts} onToggleAlert={toggleAlert} />
+            <AccountList data={data} accounts={sortedAccounts} sortState={sortState} onSort={toggleSortKey} onSortChange={updateSort} pendingAlertAccounts={pendingAlertAccounts} onToggleAlert={toggleAlert} />
           </section>
         </>
       ) : <div className="py-16 text-center text-sm text-muted-foreground">无法加载账号数据</div>}
@@ -201,21 +225,59 @@ function AccountFilters({ search, onSearch, platform, onPlatform, group, onGroup
   </div>;
 }
 
-function AccountList({ data, pendingAlertAccounts, onToggleAlert }: { data: AccountOverviewDto; pendingAlertAccounts: Set<number>; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
-  if (data.accounts.length === 0) return <div className="rounded-md border py-12 text-center text-sm text-muted-foreground">暂无账号数据</div>;
+function AccountList({ data, accounts, sortState, onSort, onSortChange, pendingAlertAccounts, onToggleAlert }: { data: AccountOverviewDto; accounts: AccountSummaryDto[]; sortState: AccountSortState; onSort: (key: AccountSortKey) => void; onSortChange: (state: AccountSortState) => void; pendingAlertAccounts: Set<number>; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
+  if (accounts.length === 0) return <div className="rounded-md border py-12 text-center text-sm text-muted-foreground">暂无账号数据</div>;
   return <>
+    <div className="grid grid-cols-[minmax(0,1fr)_2.5rem] gap-2 md:hidden">
+      <Select value={sortState.key} onValueChange={(key) => onSortChange({ key: key as AccountSortKey, order: 'asc' })}>
+        <SelectTrigger aria-label="选择账号排序字段" className="h-10"><SelectValue /></SelectTrigger>
+        <SelectContent>{ACCOUNT_SORT_KEYS.map((key) => <SelectItem key={key} value={key}>{ACCOUNT_SORT_LABELS[key]}</SelectItem>)}</SelectContent>
+      </Select>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button type="button" variant="outline" size="icon" className="size-10" aria-label={`切换为${sortState.order === 'asc' ? '降序' : '升序'}`} onClick={() => onSortChange({ ...sortState, order: sortState.order === 'asc' ? 'desc' : 'asc' })}>
+            {sortState.order === 'asc' ? <ArrowUp aria-hidden="true" /> : <ArrowDown aria-hidden="true" />}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{sortState.order === 'asc' ? '当前升序' : '当前降序'}</TooltipContent>
+      </Tooltip>
+    </div>
     <div className="hidden max-h-[34rem] overflow-auto rounded-md border md:block">
       <table className="w-full min-w-[1180px] text-sm">
         <thead className="sticky top-0 z-10 bg-card shadow-[0_1px_0_hsl(var(--border))]"><tr className="text-left">
-          <th className="px-3 py-3 font-medium">账号</th><th className="px-3 py-3 font-medium">平台 / 分组</th><th className="px-3 py-3 font-medium">调度</th>
-          {(['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'eligibleCount'] as AccountAggregateMetricKey[]).map((key) => <th key={key} className="px-3 py-3 font-medium"><MetricDefinitionTooltip metric={key} compact window={data.window} coverage={data.coverage} /></th>)}
-          <th className="px-3 py-3 font-medium">同步</th><th className="px-3 py-3 font-medium">告警</th>
+          <SortableAccountHeader sortKey="account" state={sortState} onSort={onSort} />
+          <SortableAccountHeader sortKey="platformGroup" state={sortState} onSort={onSort} />
+          <SortableAccountHeader sortKey="schedulable" state={sortState} onSort={onSort} />
+          <SortableAccountHeader sortKey="availability" metric="availability" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
+          <SortableAccountHeader sortKey="errorRate" metric="errorRate" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
+          <SortableAccountHeader sortKey="durationP95Ms" metric="durationP95Ms" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
+          <SortableAccountHeader sortKey="firstTokenP95Ms" metric="firstTokenP95Ms" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
+          <SortableAccountHeader sortKey="cacheHitRate" metric="cacheHitRate" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
+          <SortableAccountHeader sortKey="userBilledUsd" metric="userBilledUsd" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
+          <SortableAccountHeader sortKey="accountBilledUsd" metric="accountBilledUsd" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
+          <SortableAccountHeader sortKey="eligibleCount" metric="eligibleCount" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
+          <SortableAccountHeader sortKey="sync" state={sortState} onSort={onSort} />
+          <SortableAccountHeader sortKey="alertEnabled" state={sortState} onSort={onSort} />
         </tr></thead>
-        <tbody>{data.accounts.map((account) => <AccountTableRow key={account.id} account={account} pending={pendingAlertAccounts.has(account.id)} onToggleAlert={onToggleAlert} />)}</tbody>
+        <tbody>{accounts.map((account) => <AccountTableRow key={account.id} account={account} pending={pendingAlertAccounts.has(account.id)} onToggleAlert={onToggleAlert} />)}</tbody>
       </table>
     </div>
-    <div className="space-y-2 md:hidden">{data.accounts.map((account) => <AccountMobileRow key={account.id} account={account} window={data.window} coverage={data.coverage} pending={pendingAlertAccounts.has(account.id)} onToggleAlert={onToggleAlert} />)}</div>
+    <div className="space-y-2 md:hidden">{accounts.map((account) => <AccountMobileRow key={account.id} account={account} window={data.window} coverage={data.coverage} pending={pendingAlertAccounts.has(account.id)} onToggleAlert={onToggleAlert} />)}</div>
   </>;
+}
+
+function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverage }: { sortKey: AccountSortKey; metric?: AccountAggregateMetricKey; state: AccountSortState; onSort: (key: AccountSortKey) => void; window?: AccountOverviewDto['window']; coverage?: AccountOverviewDto['coverage'] }) {
+  const active = state.key === sortKey;
+  const SortIcon = active ? state.order === 'asc' ? ArrowUp : ArrowDown : ArrowUpDown;
+  const label = ACCOUNT_SORT_LABELS[sortKey];
+  return <th className="px-3 py-3 font-medium" aria-sort={active ? state.order === 'asc' ? 'ascending' : 'descending' : 'none'}>
+    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+      <button type="button" className="inline-flex items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onSort(sortKey)} aria-label={`${label}，点击切换排序`}>
+        {label}<SortIcon className="size-3.5" aria-hidden="true" />
+      </button>
+      {metric ? <MetricDefinitionTooltip metric={metric} compact iconOnly window={window} coverage={coverage} /> : null}
+    </span>
+  </th>;
 }
 
 function AccountTableRow({ account, pending, onToggleAlert }: { account: AccountSummaryDto; pending: boolean; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {

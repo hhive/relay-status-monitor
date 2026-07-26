@@ -57,6 +57,27 @@ test('account list and detail expose a per-account alert master switch', () => {
   assert.match(detail, /result === 'saved'[\s\S]*?fetchDetail\(\)/, 'a successful toggle must supersede stale detail requests');
 });
 
+test('account list exposes persisted sorting on desktop and mobile', async () => {
+  const sort = await import('../src/lib/account-list-sort');
+  const shared = source('src/components/account-observability/account-overview.tsx');
+  const tooltip = source('src/components/account-observability/metric-definition-tooltip.tsx');
+
+  assert.equal(sort.ACCOUNT_SORT_KEYS.length, 13);
+  assert.match(shared, /readAccountSortStateSafely\(\(\) => window\.localStorage\)/);
+  assert.match(shared, /setSortState\(next\);[\s\S]*?writeAccountSortStateSafely\(\(\) => window\.localStorage, next\)/);
+  assert.match(shared, /sortAccountSummaries/);
+  assert.match(shared, /aria-sort=/);
+  assert.match(shared, /ArrowUpDown/);
+  assert.match(shared, /ArrowUp/);
+  assert.match(shared, /ArrowDown/);
+  assert.match(shared, /aria-label="选择账号排序字段"/);
+  assert.match(shared, /ACCOUNT_SORT_KEYS\.map/);
+  assert.match(shared, /grid-cols-\[minmax\(0,1fr\)_2\.5rem\]/);
+  assert.match(shared, /className="size-10"/);
+  assert.match(tooltip, /iconOnly\??:/);
+  for (const key of sort.ACCOUNT_SORT_KEYS) assert.match(shared, new RegExp(`sortKey=['"]${key}['"]`));
+});
+
 test('account detail requests each selected window and exposes five trend views plus minute details', () => {
   const detail = source('src/app/(dashboard)/accounts/[id]/page.tsx');
   assert.match(detail, /useState<AccountWindowKey>\('last1h'\)/);

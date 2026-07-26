@@ -13,10 +13,11 @@ interface MetricDefinitionTooltipProps {
   window?: AccountWindowDto;
   coverage?: AccountCoverageDto;
   compact?: boolean;
+  iconOnly?: boolean;
   className?: string;
 }
 
-export function MetricDefinitionTooltip({ metric, value, window, coverage, compact = false, className }: MetricDefinitionTooltipProps) {
+export function MetricDefinitionTooltip({ metric, value, window, coverage, compact = false, iconOnly = false, className }: MetricDefinitionTooltipProps) {
   const [open, setOpen] = useState(false);
   const contentId = useId();
   const definition = ACCOUNT_METRIC_DEFINITIONS[metric];
@@ -41,7 +42,7 @@ export function MetricDefinitionTooltip({ metric, value, window, coverage, compa
         >
           <span className={cn(compact ? 'text-xs font-medium text-muted-foreground' : 'min-w-0', !compact && value != null && 'flex flex-col gap-1')}>
             <span className="inline-flex items-center gap-1">
-              {definition.label}
+              {iconOnly ? null : definition.label}
               <Info className="size-3.5 shrink-0 opacity-55 group-hover:opacity-100" aria-hidden="true" />
             </span>
             {!compact && value != null ? <span className="break-words text-xl font-semibold text-foreground">{value}</span> : null}
