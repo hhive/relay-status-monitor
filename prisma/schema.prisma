@@ -34,6 +34,12 @@ enum AccountSyncRunStatus {
   FAILED
 }
 
+enum AccountMetricSnapshotWindow {
+  TODAY
+  LAST_1H
+  LAST_24H
+}
+
 // ============ 核心表 ============
 
 /// Sub2API 账号只读投影
@@ -72,12 +78,48 @@ model Sub2ApiAccount {
   updatedAt                  DateTime               @updatedAt
 
   metricMinutes              AccountMetricMinute[]
+  metricSnapshots            AccountMetricSnapshot[]
   syncRuns                   AccountSyncRun[]
   alertEvents                AccountAlertEvent[]
   alertRules                 AccountAlertRule[]
 
   @@index([syncState, remoteStatus])
   @@index([lastSyncedAt])
+}
+
+model AccountMetricSnapshotBatch {
+  id                 Int                         @id @default(autoincrement())
+  windowKey          AccountMetricSnapshotWindow
+  windowStart        DateTime
+  windowEnd          DateTime
+  lastCompleteMinute DateTime?
+  computedAt         DateTime                    @default(now())
+  active             Boolean                     @default(false)
+  snapshots          AccountMetricSnapshot[]
+
+  @@index([windowKey, active])
+}
+
+model AccountMetricSnapshot {
+  id                 Int                        @id @default(autoincrement())
+  batchId            Int
+  batch              AccountMetricSnapshotBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  accountId          Int
+  account            Sub2ApiAccount             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  successCount       Int                        @default(0)
+  upstreamErrorCount Int                        @default(0)
+  eligibleCount      Int                        @default(0)
+  availability       Float?
+  errorRate          Float?
+  durationP95Ms      Float?
+  firstTokenP95Ms    Float?
+  cacheHitRate       Float?
+  userBilledUsd      Decimal                    @default(0) @db.Decimal(24, 6)
+  accountBilledUsd   Decimal                    @default(0) @db.Decimal(24, 6)
+  lastCompleteMinute DateTime?
+
+  @@unique([batchId, accountId])
+  @@index([accountId])
 }
 
 /// 每个账号每个 UTC 分钟的可重算聚合桶

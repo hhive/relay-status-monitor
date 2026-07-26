@@ -32,6 +32,7 @@ test('every non-public API handler performs a session guard before protected wor
     .filter((relative) => !publicRoutes.has(relative));
 
   assert.ok(protectedRoutes.length > 0);
+  assert.ok(protectedRoutes.includes('accounts/list/route.ts'), 'accounts/list/route.ts must exist and be protected');
   for (const relative of protectedRoutes) {
     const contents = readFileSync(path.join(apiRoot, relative), 'utf8');
     const requiredGuard = relative === 'auth/password/route.ts'

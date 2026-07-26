@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, ChartNoAxesCombined, LayoutDashboard, RefreshCw, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { AccountTrendChart, type AccountTrendSeries } from './account-trend-chart';
@@ -14,22 +14,33 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { PageHeader } from '@/components/page-header';
 import {
   ACCOUNT_SORT_KEYS,
   ACCOUNT_SORT_LABELS,
   DEFAULT_ACCOUNT_SORT,
   readAccountSortStateSafely,
-  sortAccountSummaries,
   writeAccountSortStateSafely,
   type AccountSortKey,
   type AccountSortState,
 } from '@/lib/account-list-sort';
 import { formatAccountMetric, type AccountAggregateMetricKey, type AccountMetricKey } from '@/lib/account-metric-definitions';
-import type { AccountOverviewDto, AccountStatusFilter, AccountSummaryDto, AccountWindowKey } from '@/lib/account-observability-ui';
+import {
+  ACCOUNT_PAGE_SIZES,
+  type AccountCoverageDto,
+  type AccountListItemDto,
+  type AccountListResponseDto,
+  type AccountOverviewResponseDto,
+  type AccountPageSize,
+  type AccountStatusFilter,
+  type AccountWindowDto,
+  type AccountWindowKey,
+} from '@/lib/account-observability-ui';
 import { accountDataIsStale, formatAccountGroups } from '@/lib/account-observability/presentation';
 import { runAccountAlertToggle } from '@/lib/account-alert-toggle';
 import { apiFetch } from '@/lib/api-fetch';
+import { getPaginationItems, type PaginationItem as AccountPaginationItem } from '@/lib/pagination';
 import { beginLatestRequest } from '@/lib/request-sequence';
 import { cn } from '@/lib/utils';
 
@@ -52,9 +63,11 @@ const TREND_VIEWS: Record<'quality' | 'latency' | 'billing', { label: string; se
 };
 
 const SUMMARY_METRICS: AccountAggregateMetricKey[] = ['eligibleCount', 'availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd'];
+const ACCOUNT_LIST_METRICS = ['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'eligibleCount'] as const;
 
 export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
-  const [data, setData] = useState<AccountOverviewDto | null>(null);
+  const [overview, setOverview] = useState<AccountOverviewResponseDto | null>(null);
+  const [list, setList] = useState<AccountListResponseDto | null>(null);
   const [windowKey, setWindowKey] = useState<AccountWindowKey>('last1h');
   const [status, setStatus] = useState<AccountStatusFilter>('schedulable');
   const [platform, setPlatform] = useState('');
@@ -62,23 +75,38 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   const [search, setSearch] = useState('');
   const [deferredSearch, setDeferredSearch] = useState('');
   const [trendView, setTrendView] = useState<keyof typeof TREND_VIEWS>('quality');
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<AccountPageSize>(50);
+  const [sortReady, setSortReady] = useState(false);
+  const [overviewLoading, setOverviewLoading] = useState(!listOnly);
+  const [listLoading, setListLoading] = useState(true);
+  const [overviewRefreshing, setOverviewRefreshing] = useState(false);
+  const [listRefreshing, setListRefreshing] = useState(false);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [pendingAlertAccounts, setPendingAlertAccounts] = useState<Set<number>>(() => new Set());
   const [sortState, setSortState] = useState<AccountSortState>(DEFAULT_ACCOUNT_SORT);
   const pendingAlertAccountsRef = useRef(new Set<number>());
-  const requestSequence = useRef(0);
+  const overviewSequence = useRef(0);
+  const listSequence = useRef(0);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setDeferredSearch(search.trim()), 250);
+    const timer = window.setTimeout(() => {
+      setDeferredSearch(search.trim());
+      setPage(1);
+    }, 250);
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => setSortState(readAccountSortStateSafely(() => window.localStorage)), []);
+  useEffect(() => {
+    setSortState(readAccountSortStateSafely(() => window.localStorage));
+    setSortReady(true);
+  }, []);
 
   const fetchOverview = useCallback(async () => {
-    const isCurrent = beginLatestRequest(requestSequence);
+    if (listOnly) return;
+    const isCurrent = beginLatestRequest(overviewSequence);
+    setOverviewLoading(true);
     const params = new URLSearchParams({ window: windowKey, status });
     if (platform) params.set('platform', platform);
     if (group.trim()) params.set('group', group.trim());
@@ -88,22 +116,56 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || '账号指标暂不可用');
       if (!isCurrent()) return;
-      setData(body as AccountOverviewDto);
-      setError(null);
+      setOverview(body as AccountOverviewResponseDto);
+      setOverviewError(null);
     } catch (reason) {
-      if (isCurrent()) setError(reason instanceof Error ? reason.message : '账号指标暂不可用');
+      if (isCurrent()) setOverviewError(reason instanceof Error ? reason.message : '账号指标暂不可用');
     } finally {
       if (isCurrent()) {
-        setLoading(false);
-        setRefreshing(false);
+        setOverviewLoading(false);
+        setOverviewRefreshing(false);
       }
     }
-  }, [deferredSearch, group, platform, status, windowKey]);
+  }, [deferredSearch, group, listOnly, platform, status, windowKey]);
+
+  const fetchList = useCallback(async () => {
+    if (!sortReady) return;
+    const isCurrent = beginLatestRequest(listSequence);
+    setListLoading(true);
+    const params = new URLSearchParams({
+      window: windowKey,
+      status,
+      sortKey: sortState.key,
+      sortOrder: sortState.order,
+      page: String(page),
+      pageSize: String(pageSize),
+    });
+    if (platform) params.set('platform', platform);
+    if (group.trim()) params.set('group', group.trim());
+    if (deferredSearch) params.set('search', deferredSearch);
+    try {
+      const response = await apiFetch(`/api/accounts/list?${params}`);
+      const body = await response.json() as AccountListResponseDto & { error?: string };
+      if (!response.ok) throw new Error(body.error || '账号列表暂不可用');
+      if (!isCurrent()) return;
+      setList(body);
+      setPage(body.pagination.page);
+      setListError(null);
+    } catch (reason) {
+      if (isCurrent()) setListError(reason instanceof Error ? reason.message : '账号列表暂不可用');
+    } finally {
+      if (isCurrent()) {
+        setListLoading(false);
+        setListRefreshing(false);
+      }
+    }
+  }, [deferredSearch, group, page, pageSize, platform, sortReady, sortState, status, windowKey]);
 
   useEffect(() => { void fetchOverview(); }, [fetchOverview]);
+  useEffect(() => { void fetchList(); }, [fetchList]);
 
   const toggleAlert = useCallback(async (accountId: number, previous: boolean, enabled: boolean) => {
-    const patch = (value: boolean) => setData((prev) => prev
+    const patch = (value: boolean) => setList((prev) => prev
       ? { ...prev, accounts: prev.accounts.map((account) => account.id === accountId ? { ...account, alertEnabled: value } : account) }
       : prev);
     const result = await runAccountAlertToggle({
@@ -126,13 +188,16 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
         return body.enabled;
       },
     });
-    if (result === 'saved') void fetchOverview();
+    if (result === 'saved') void fetchList();
     if (result === 'failed') toast.error('账号告警开关保存失败');
-  }, [fetchOverview]);
+  }, [fetchList]);
 
-  const platforms = useMemo(() => Array.from(new Set((data?.accounts ?? []).map((item) => item.platform).filter((value): value is string => Boolean(value)))).sort(), [data]);
-  const sortedAccounts = useMemo(() => sortAccountSummaries(data?.accounts ?? [], sortState), [data?.accounts, sortState]);
+  const changeWindow = (value: AccountWindowKey) => { setPage(1); setWindowKey(value); };
+  const changeStatus = (value: AccountStatusFilter) => { setPage(1); setStatus(value); };
+  const changePlatform = (value: string) => { setPage(1); setPlatform(value === 'all' ? '' : value); };
+  const changeGroup = (value: string) => { setPage(1); setGroup(value); };
   const updateSort = useCallback((next: AccountSortState) => {
+    setPage(1);
     setSortState(next);
     writeAccountSortStateSafely(() => window.localStorage, next);
   }, []);
@@ -143,26 +208,37 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   }, [sortState, updateSort]);
   const PageIcon = listOnly ? ChartNoAxesCombined : LayoutDashboard;
   const title = listOnly ? '账号' : '总览';
+  const activeWindow = list?.window ?? overview?.window;
+  const loading = listLoading || (!listOnly && overviewLoading);
+  const refreshing = listRefreshing || (!listOnly && overviewRefreshing);
+  const refresh = () => {
+    setListRefreshing(true);
+    void fetchList();
+    if (!listOnly) {
+      setOverviewRefreshing(true);
+      void fetchOverview();
+    }
+  };
 
   return (
     <div className="min-w-0 space-y-5">
       <PageHeader
         icon={PageIcon}
         title={title}
-        description={data ? `${data.window.label} · 最后完整分钟 ${formatBeijing(data.window.lastCompleteMinute)}` : '账号真实流量'}
-        actions={<Button variant="outline" size="sm" disabled={refreshing || loading} onClick={() => { setRefreshing(true); void fetchOverview(); }}><RefreshCw data-icon="inline-start" className={cn(refreshing && 'animate-spin')} />刷新</Button>}
+        description={activeWindow ? `${activeWindow.label} · 最后完整分钟 ${formatBeijing(activeWindow.lastCompleteMinute)}` : '账号真实流量'}
+        actions={<Button variant="outline" size="sm" disabled={refreshing || loading} onClick={refresh}><RefreshCw data-icon="inline-start" className={cn(refreshing && 'animate-spin')} />刷新</Button>}
       />
 
       <div className="flex min-w-0 flex-col gap-3 border-y py-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="min-w-0">
-          <Tabs value={windowKey} onValueChange={(value) => setWindowKey(value as AccountWindowKey)} aria-label="筛选时间窗口">
+          <Tabs value={windowKey} onValueChange={(value) => changeWindow(value as AccountWindowKey)} aria-label="筛选时间窗口">
             <TabsList className="grid h-auto w-full grid-cols-3">
               {WINDOW_OPTIONS.map((option) => <TabsTrigger key={option.value} value={option.value} className="px-2">{option.label}</TabsTrigger>)}
             </TabsList>
           </Tabs>
         </div>
         <div className="min-w-0">
-          <Tabs value={status} onValueChange={(value) => setStatus(value as AccountStatusFilter)} aria-label="筛选状态">
+          <Tabs value={status} onValueChange={(value) => changeStatus(value as AccountStatusFilter)} aria-label="筛选状态">
             <TabsList className="grid h-auto w-full grid-cols-3">
               {STATUS_OPTIONS.map((option) => <TabsTrigger key={option.value} value={option.value} className="px-2">{option.label}</TabsTrigger>)}
             </TabsList>
@@ -170,13 +246,11 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
         </div>
       </div>
 
-      {error ? <div role="alert" className="flex items-center gap-2 rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"><AlertCircle className="size-4 shrink-0" />{error}{data ? '，已保留上次数据' : ''}</div> : null}
-      {data && !data.coverage.complete ? <CoverageNotice data={data} /> : null}
+      {overviewError ? <div role="alert" className="flex items-center gap-2 rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"><AlertCircle className="size-4 shrink-0" />{overviewError}{overview ? '，已保留上次总览' : ''}</div> : null}
+      {!listOnly && overview && !overview.coverage.complete ? <CoverageNotice data={overview} /> : null}
 
-      {loading && !data ? <OverviewSkeleton /> : data ? (
-        <>
-          {!listOnly ? <>
-            <SummaryGrid data={data} />
+      {!listOnly ? overviewLoading && !overview ? <OverviewSkeleton /> : overview ? <>
+            <SummaryGrid data={overview} />
             <section className="space-y-3 border-y py-4" aria-labelledby="overview-trend-heading">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h2 id="overview-trend-heading" className="text-sm font-semibold">总体趋势</h2>
@@ -186,25 +260,26 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
                   </TabsList>
                 </Tabs>
               </div>
-              <AccountTrendChart data={data.trend} series={TREND_VIEWS[trendView].series} window={data.window} coverage={data.coverage} />
+              <AccountTrendChart data={overview.trend} series={TREND_VIEWS[trendView].series} window={overview.window} coverage={overview.coverage} />
             </section>
-          </> : null}
+          </> : <div className="py-10 text-center text-sm text-muted-foreground">无法加载总览数据</div> : null}
 
-          <section className="min-w-0 space-y-3" aria-labelledby="account-list-heading">
-            <div className="flex items-center justify-between gap-3">
-              <h2 id="account-list-heading" className="text-sm font-semibold">账号列表</h2>
-              <span className="text-xs text-muted-foreground">{data.summary.selectedAccountCount} 个账号</span>
-            </div>
-            <AccountFilters search={search} onSearch={setSearch} platform={platform} onPlatform={setPlatform} group={group} onGroup={setGroup} platforms={platforms} />
-            <AccountList data={data} accounts={sortedAccounts} sortState={sortState} onSort={toggleSortKey} onSortChange={updateSort} pendingAlertAccounts={pendingAlertAccounts} onToggleAlert={toggleAlert} />
-          </section>
-        </>
-      ) : <div className="py-16 text-center text-sm text-muted-foreground">无法加载账号数据</div>}
+      <section className="min-w-0 space-y-3" aria-labelledby="account-list-heading">
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="account-list-heading" className="text-sm font-semibold">账号列表</h2>
+          <span className="text-xs text-muted-foreground">{list?.pagination.totalItems ?? 0} 个账号</span>
+        </div>
+        <AccountFilters search={search} onSearch={setSearch} platform={platform} onPlatform={changePlatform} group={group} onGroup={changeGroup} platforms={list?.facets.platforms ?? []} />
+        {listError ? <div role="alert" className="flex items-center gap-2 rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"><AlertCircle className="size-4 shrink-0" />{listError}{list ? '，已保留上次列表' : ''}</div> : null}
+        {listLoading && !list ? <Skeleton className="h-64" /> : list
+          ? <AccountList data={list} accounts={list.accounts} coverage={overview?.coverage} pageSize={pageSize} onPageSizeChange={(value) => { setPageSize(Number(value) as AccountPageSize); setPage(1); }} onPageChange={setPage} sortState={sortState} onSort={toggleSortKey} onSortChange={updateSort} pendingAlertAccounts={pendingAlertAccounts} onToggleAlert={toggleAlert} />
+          : <div className="rounded-md border py-12 text-center text-sm text-muted-foreground">无法加载账号列表</div>}
+      </section>
     </div>
   );
 }
 
-function SummaryGrid({ data }: { data: AccountOverviewDto }) {
+function SummaryGrid({ data }: { data: AccountOverviewResponseDto }) {
   const values: Record<AccountMetricKey, number | string | null> = {
     ...data.summary,
     selectedAccountCount: data.summary.selectedAccountCount,
@@ -225,8 +300,30 @@ function AccountFilters({ search, onSearch, platform, onPlatform, group, onGroup
   </div>;
 }
 
-function AccountList({ data, accounts, sortState, onSort, onSortChange, pendingAlertAccounts, onToggleAlert }: { data: AccountOverviewDto; accounts: AccountSummaryDto[]; sortState: AccountSortState; onSort: (key: AccountSortKey) => void; onSortChange: (state: AccountSortState) => void; pendingAlertAccounts: Set<number>; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
-  if (accounts.length === 0) return <div className="rounded-md border py-12 text-center text-sm text-muted-foreground">暂无账号数据</div>;
+function AccountList({ data, accounts, coverage, pageSize, onPageSizeChange, onPageChange, sortState, onSort, onSortChange, pendingAlertAccounts, onToggleAlert }: {
+  data: AccountListResponseDto;
+  accounts: AccountListItemDto[];
+  coverage?: AccountCoverageDto;
+  pageSize: AccountPageSize;
+  onPageSizeChange: (value: string) => void;
+  onPageChange: (page: number) => void;
+  sortState: AccountSortState;
+  onSort: (key: AccountSortKey) => void;
+  onSortChange: (state: AccountSortState) => void;
+  pendingAlertAccounts: Set<number>;
+  onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void;
+}) {
+  const { page, totalItems, totalPages } = data.pagination;
+  const rangeStart = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = totalItems === 0 ? 0 : Math.min(page * pageSize, totalItems);
+  const paginationItems = getPaginationItems(page, totalPages);
+  const changePage = (next: number) => onPageChange(Math.min(Math.max(1, next), Math.max(1, totalPages)));
+  const renderAccountPageItem = (item: AccountPaginationItem, index: number) => item === 'ellipsis'
+    ? <PaginationItem key={`ellipsis-${index}`}><PaginationEllipsis /></PaginationItem>
+    : <PaginationItem key={item}>
+      <PaginationLink href="#account-list-heading" isActive={item === page} onClick={(event) => { event.preventDefault(); changePage(item); }}>{item}</PaginationLink>
+    </PaginationItem>;
+
   return <>
     <div className="grid grid-cols-[minmax(0,1fr)_2.5rem] gap-2 md:hidden">
       <Select value={sortState.key} onValueChange={(key) => onSortChange({ key: key as AccountSortKey, order: 'asc' })}>
@@ -242,31 +339,49 @@ function AccountList({ data, accounts, sortState, onSort, onSortChange, pendingA
         <TooltipContent>{sortState.order === 'asc' ? '当前升序' : '当前降序'}</TooltipContent>
       </Tooltip>
     </div>
-    <div className="hidden max-h-[34rem] overflow-auto rounded-md border md:block">
+    {accounts.length === 0 ? <div className="rounded-md border py-12 text-center text-sm text-muted-foreground">暂无账号数据</div> : <>
+    <div className="hidden overflow-x-auto rounded-md border md:block">
       <table className="w-full min-w-[1180px] text-sm">
         <thead className="sticky top-0 z-10 bg-card shadow-[0_1px_0_hsl(var(--border))]"><tr className="text-left">
           <SortableAccountHeader sortKey="account" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="platformGroup" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="schedulable" state={sortState} onSort={onSort} />
-          <SortableAccountHeader sortKey="availability" metric="availability" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
-          <SortableAccountHeader sortKey="errorRate" metric="errorRate" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
-          <SortableAccountHeader sortKey="durationP95Ms" metric="durationP95Ms" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
-          <SortableAccountHeader sortKey="firstTokenP95Ms" metric="firstTokenP95Ms" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
-          <SortableAccountHeader sortKey="cacheHitRate" metric="cacheHitRate" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
-          <SortableAccountHeader sortKey="userBilledUsd" metric="userBilledUsd" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
-          <SortableAccountHeader sortKey="accountBilledUsd" metric="accountBilledUsd" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
-          <SortableAccountHeader sortKey="eligibleCount" metric="eligibleCount" state={sortState} onSort={onSort} window={data.window} coverage={data.coverage} />
+          <SortableAccountHeader sortKey="availability" metric="availability" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
+          <SortableAccountHeader sortKey="errorRate" metric="errorRate" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
+          <SortableAccountHeader sortKey="durationP95Ms" metric="durationP95Ms" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
+          <SortableAccountHeader sortKey="firstTokenP95Ms" metric="firstTokenP95Ms" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
+          <SortableAccountHeader sortKey="cacheHitRate" metric="cacheHitRate" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
+          <SortableAccountHeader sortKey="userBilledUsd" metric="userBilledUsd" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
+          <SortableAccountHeader sortKey="accountBilledUsd" metric="accountBilledUsd" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
+          <SortableAccountHeader sortKey="eligibleCount" metric="eligibleCount" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="sync" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="alertEnabled" state={sortState} onSort={onSort} />
         </tr></thead>
         <tbody>{accounts.map((account) => <AccountTableRow key={account.id} account={account} pending={pendingAlertAccounts.has(account.id)} onToggleAlert={onToggleAlert} />)}</tbody>
       </table>
     </div>
-    <div className="space-y-2 md:hidden">{accounts.map((account) => <AccountMobileRow key={account.id} account={account} window={data.window} coverage={data.coverage} pending={pendingAlertAccounts.has(account.id)} onToggleAlert={onToggleAlert} />)}</div>
+    <div className="space-y-2 md:hidden">{accounts.map((account) => <AccountMobileRow key={account.id} account={account} window={data.window} coverage={coverage} pending={pendingAlertAccounts.has(account.id)} onToggleAlert={onToggleAlert} />)}</div>
+    </>}
+    <div className="flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+        <span>第 {rangeStart}-{rangeEnd} 条，共 {totalItems} 条</span>
+        <Select value={String(pageSize)} onValueChange={onPageSizeChange}>
+          <SelectTrigger aria-label="每页账号数" className="h-9 w-24"><SelectValue /></SelectTrigger>
+          <SelectContent>{ACCOUNT_PAGE_SIZES.map((size) => <SelectItem key={size} value={String(size)}>{size} / 页</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      <Pagination className="mx-0 w-auto justify-start sm:justify-end">
+        <PaginationContent>
+          <PaginationItem><PaginationPrevious href="#account-list-heading" aria-disabled={page <= 1} tabIndex={page <= 1 ? -1 : 0} className={cn(page <= 1 && 'pointer-events-none opacity-50')} onClick={(event) => { event.preventDefault(); changePage(page - 1); }} /></PaginationItem>
+          {(totalPages === 0 ? [] : paginationItems).map(renderAccountPageItem)}
+          <PaginationItem><PaginationNext href="#account-list-heading" aria-disabled={page >= totalPages} tabIndex={page >= totalPages ? -1 : 0} className={cn(page >= totalPages && 'pointer-events-none opacity-50')} onClick={(event) => { event.preventDefault(); changePage(page + 1); }} /></PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </div>
   </>;
 }
 
-function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverage }: { sortKey: AccountSortKey; metric?: AccountAggregateMetricKey; state: AccountSortState; onSort: (key: AccountSortKey) => void; window?: AccountOverviewDto['window']; coverage?: AccountOverviewDto['coverage'] }) {
+function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverage }: { sortKey: AccountSortKey; metric?: AccountAggregateMetricKey; state: AccountSortState; onSort: (key: AccountSortKey) => void; window?: AccountWindowDto; coverage?: AccountCoverageDto }) {
   const active = state.key === sortKey;
   const SortIcon = active ? state.order === 'asc' ? ArrowUp : ArrowDown : ArrowUpDown;
   const label = ACCOUNT_SORT_LABELS[sortKey];
@@ -280,22 +395,22 @@ function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverag
   </th>;
 }
 
-function AccountTableRow({ account, pending, onToggleAlert }: { account: AccountSummaryDto; pending: boolean; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
+function AccountTableRow({ account, pending, onToggleAlert }: { account: AccountListItemDto; pending: boolean; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
   const metrics = account.metrics;
   return <tr className="border-b last:border-0 hover:bg-muted/40">
     <td className="px-3 py-3"><Link href={`/accounts/${account.id}`} className="font-medium text-primary hover:underline">{account.name}</Link><div className="text-xs text-muted-foreground">{account.type ?? '未知类型'}</div></td>
     <td className="max-w-56 px-3 py-3"><div>{account.platform ?? '未知平台'}</div><div className="truncate text-xs text-muted-foreground">{formatAccountGroups(account.groupProjection)}</div></td>
     <td className="px-3 py-3"><Badge variant={account.schedulable ? 'outline' : 'destructive'}>{account.schedulable ? '可调度' : '不可调度'}</Badge></td>
-    {(['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'eligibleCount'] as AccountAggregateMetricKey[]).map((key) => <td key={key} className="whitespace-nowrap px-3 py-3 tabular-nums">{formatAccountMetric(key, metrics[key])}</td>)}
+    {ACCOUNT_LIST_METRICS.map((key) => <td key={key} className="whitespace-nowrap px-3 py-3 tabular-nums">{formatAccountMetric(key, metrics[key])}</td>)}
     <td className="px-3 py-3">{accountDataIsStale(account) ? <Badge variant="destructive">数据同步延迟</Badge> : <span className="whitespace-nowrap text-xs text-muted-foreground">{formatBeijing(account.lastSyncedAt)}</span>}</td>
     <td className="px-3 py-3"><Switch checked={account.alertEnabled} disabled={pending} onCheckedChange={(value) => onToggleAlert(account.id, account.alertEnabled, value)} aria-label={`账号 ${account.name} 告警开关`} /></td>
   </tr>;
 }
 
-function AccountMobileRow({ account, window, coverage, pending, onToggleAlert }: { account: AccountSummaryDto; window: AccountOverviewDto['window']; coverage: AccountOverviewDto['coverage']; pending: boolean; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
+function AccountMobileRow({ account, window, coverage, pending, onToggleAlert }: { account: AccountListItemDto; window: AccountWindowDto; coverage?: AccountCoverageDto; pending: boolean; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
   return <article className="rounded-md border bg-card p-3">
     <div className="flex min-w-0 items-start justify-between gap-2"><div className="min-w-0"><Link href={`/accounts/${account.id}`} className="block truncate font-medium text-primary">{account.name}</Link><p className="truncate text-xs text-muted-foreground">{account.platform ?? '未知平台'} · {formatAccountGroups(account.groupProjection)}</p></div><Badge variant={account.schedulable ? 'outline' : 'destructive'} className="shrink-0">{account.schedulable ? '可调度' : '不可调度'}</Badge></div>
-    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">{(['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd'] as AccountAggregateMetricKey[]).map((key) => <div key={key} className="min-w-0"><dt><MetricDefinitionTooltip metric={key} compact window={window} coverage={coverage} /></dt><dd className="truncate font-medium tabular-nums">{formatAccountMetric(key, account.metrics[key])}</dd></div>)}</dl>
+    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">{ACCOUNT_LIST_METRICS.filter((key) => key !== 'eligibleCount').map((key) => <div key={key} className="min-w-0"><dt><MetricDefinitionTooltip metric={key} compact window={window} coverage={coverage} /></dt><dd className="truncate font-medium tabular-nums">{formatAccountMetric(key, account.metrics[key])}</dd></div>)}</dl>
     <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
       <span>{accountDataIsStale(account) ? <span className="text-destructive">数据同步延迟</span> : `同步 ${formatBeijing(account.lastSyncedAt)}`}</span>
       <label className="flex items-center gap-2"><span>告警</span><Switch checked={account.alertEnabled} disabled={pending} onCheckedChange={(value) => onToggleAlert(account.id, account.alertEnabled, value)} aria-label={`账号 ${account.name} 告警开关`} /></label>
@@ -303,7 +418,7 @@ function AccountMobileRow({ account, window, coverage, pending, onToggleAlert }:
   </article>;
 }
 
-function CoverageNotice({ data }: { data: AccountOverviewDto }) {
+function CoverageNotice({ data }: { data: AccountOverviewResponseDto }) {
   const reason = data.coverage.status === 'before_backfill' ? '上线前未回填' : data.coverage.status === 'collection_delay' ? '采集延迟' : '中间时段存在缺口';
   return <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-sm"><Badge className="bg-warning text-warning-foreground">数据不完整</Badge><span>{reason}，已覆盖 {data.coverage.actualMinutes}/{data.coverage.expectedMinutes} 分钟</span></div>;
 }

@@ -1,4 +1,4 @@
-import type { AccountSummaryDto } from '@/lib/account-observability-ui';
+import type { AccountListItemDto, AccountSummaryDto } from '@/lib/account-observability-ui';
 import { accountDataIsStale, formatAccountGroups } from '@/lib/account-observability/presentation';
 
 export const ACCOUNT_SORT_KEYS = [
@@ -149,7 +149,9 @@ function compareDecimals(left: string, right: string): number {
   return av < bv ? -1 : av > bv ? 1 : 0;
 }
 
-function comparePrimary(left: AccountSummaryDto, right: AccountSummaryDto, state: AccountSortState, now: Date): number {
+type SortableAccount = AccountSummaryDto | AccountListItemDto;
+
+function comparePrimary(left: SortableAccount, right: SortableAccount, state: AccountSortState, now: Date): number {
   const { key, order } = state;
   if (key === 'account') {
     return compareNullable(left.name, right.name, compareText, order) ||
@@ -179,7 +181,7 @@ function comparePrimary(left: AccountSummaryDto, right: AccountSummaryDto, state
   return compareNullable(finiteNumber(left.metrics[key]), finiteNumber(right.metrics[key]), compareNumber, order);
 }
 
-export function sortAccountSummaries(accounts: AccountSummaryDto[], state: AccountSortState, now = new Date()): AccountSummaryDto[] {
+export function sortAccountSummaries<T extends SortableAccount>(accounts: T[], state: AccountSortState, now = new Date()): T[] {
   return [...accounts].sort((left, right) => {
     const primary = comparePrimary(left, right, state, now);
     if (primary !== 0) return primary;

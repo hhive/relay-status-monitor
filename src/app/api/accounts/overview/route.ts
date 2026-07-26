@@ -9,7 +9,12 @@ export async function GET(request: Request) {
   if (!auth.ok) return auth.response;
   try {
     const params = new URL(request.url).searchParams;
-    return NextResponse.json(await getAccountOverview(parseAccountWindow(params.get('window')), parseAccountFilters(params)));
+    const { accounts, ...overview } = await getAccountOverview(
+      parseAccountWindow(params.get('window')),
+      parseAccountFilters(params),
+    );
+    void accounts;
+    return NextResponse.json(overview);
   } catch (error) {
     if (error instanceof AccountQueryValidationError) {
       return NextResponse.json({ error: '账号查询参数无效' }, { status: 400 });

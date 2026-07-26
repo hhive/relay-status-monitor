@@ -1,6 +1,7 @@
 import { prisma } from '../db';
 import { filterAccounts, type AccountFilters } from './filters';
-import { decimalToMicroUsd, effectiveBillingRate, histogramP95, mergeLatencyHistogram, microUsdToDecimal } from './metrics';
+import { aggregateMetricMinutes } from './metric-aggregate';
+import { effectiveBillingRate } from './metrics';
 import { resolveAccountWindow, type AccountWindow, type AccountWindowKey } from './window';
 
 interface AccountRow {
@@ -86,45 +87,6 @@ function billingProbe(account: AccountRow) {
   };
 }
 
-function mergeCounts(values: unknown[]): Record<string, number> {
-  const result: Record<string, number> = {};
-  for (const value of values) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
-    for (const [key, count] of Object.entries(value as Record<string, unknown>)) {
-      if (typeof count === 'number' && Number.isFinite(count)) result[key] = (result[key] ?? 0) + count;
-    }
-  }
-  return result;
-}
-
-function aggregate(minutes: MetricRow[]) {
-  const successCount = minutes.reduce((sum, row) => sum + row.successCount, 0);
-  const upstreamErrorCount = minutes.reduce((sum, row) => sum + row.upstreamErrorCount, 0);
-  const eligibleCount = minutes.reduce((sum, row) => sum + row.eligibleCount, 0);
-  const durationCount = minutes.reduce((sum, row) => sum + row.durationCount, 0);
-  const durationSumMs = minutes.reduce((sum, row) => sum + row.durationSumMs, BigInt(0));
-  const inputTokens = minutes.reduce((sum, row) => sum + row.inputTokens, BigInt(0));
-  const cacheReadTokens = minutes.reduce((sum, row) => sum + row.cacheReadTokens, BigInt(0));
-  const cacheCreationTokens = minutes.reduce((sum, row) => sum + row.cacheCreationTokens, BigInt(0));
-  const tokenDenominator = inputTokens + cacheReadTokens + cacheCreationTokens;
-  return {
-    successCount,
-    upstreamErrorCount,
-    eligibleCount,
-    availability: eligibleCount === 0 ? null : successCount / eligibleCount,
-    errorRate: eligibleCount === 0 ? null : upstreamErrorCount / eligibleCount,
-    averageDurationMs: durationCount === 0 ? null : Number(durationSumMs) / durationCount,
-    durationP95Ms: histogramP95(mergeLatencyHistogram(minutes.map((row) => (row.durationHistogram ?? {}) as Record<string, number>))),
-    firstTokenP95Ms: histogramP95(mergeLatencyHistogram(minutes.map((row) => (row.firstTokenHistogram ?? {}) as Record<string, number>))),
-    cacheHitRate: tokenDenominator === BigInt(0) ? null : Number(cacheReadTokens) / Number(tokenDenominator),
-    promptTokens: tokenDenominator.toString(),
-    userBilledUsd: microUsdToDecimal(minutes.reduce((sum, row) => sum + decimalToMicroUsd(String(row.userBilledUsd)), BigInt(0))),
-    accountBilledUsd: microUsdToDecimal(minutes.reduce((sum, row) => sum + decimalToMicroUsd(String(row.accountBilledUsd)), BigInt(0))),
-    errorStatusCounts: mergeCounts(minutes.map((row) => row.errorStatusCounts)),
-    errorPhaseCounts: mergeCounts(minutes.map((row) => row.errorPhaseCounts)),
-  };
-}
-
 function coverage(accountIds: number[], minutes: MetricRow[], window: AccountWindow, latestMetricRun: MetricRunRow | null) {
   if (accountIds.length === 0) {
     return { earliestBucket: null, latestBucket: null, expectedMinutes: window.expectedMinutes, actualMinutes: 0, missingMinutes: 0, complete: true, status: 'complete' as const };
@@ -163,7 +125,7 @@ function coverage(accountIds: number[], minutes: MetricRow[], window: AccountWin
 }
 
 function minuteDto(rows: MetricRow[], bucketStart: Date, complete = true) {
-  return { bucketStart, complete, ...aggregate(rows) };
+  return { bucketStart, complete, ...aggregateMetricMinutes(rows) };
 }
 
 export function buildAccountOverview(input: {
@@ -210,7 +172,7 @@ export function buildAccountOverview(input: {
     summary: {
       selectedAccountCount: accounts.length,
       schedulableAccountCount: accounts.filter((account) => account.syncState === 'ACTIVE' && account.schedulable === true).length,
-      ...aggregate(minutes),
+      ...aggregateMetricMinutes(minutes),
     },
     trend,
     accounts: accounts.map((account) => {
@@ -229,8 +191,8 @@ export function buildAccountOverview(input: {
         alertEnabled: account.alertEnabled ?? true,
         lastCompleteMinute: accountMinutes.at(-1)?.bucketStart ?? null,
         billingProbe: billingProbe(account),
-        metrics: aggregate(accountMinutes),
-        metrics24h: aggregate(accountMinutes),
+        metrics: aggregateMetricMinutes(accountMinutes),
+        metrics24h: aggregateMetricMinutes(accountMinutes),
       };
     }),
     openAlertCount: input.openAlertCount,

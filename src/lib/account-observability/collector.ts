@@ -2,6 +2,7 @@ import { prisma } from '../db';
 import { aggregateMinute, type ErrorEvent, type UsageEvent } from './aggregate';
 import { evaluateAccountAlerts } from './alerts';
 import { microUsdToDecimal, minuteBucket } from './metrics';
+import { refreshAccountMetricSnapshots } from './snapshot';
 import {
   createSub2ApiReadonlyClient,
   queryProviderErrorRows,
@@ -156,6 +157,7 @@ export async function rebuildAccountMetrics(
   start: Date,
   end: Date,
   runWindow: (window: MetricWindow) => Promise<MetricWindowResult>,
+  refreshSnapshots?: () => Promise<void>,
 ): Promise<MetricWindowResult> {
   const minutes = (end.getTime() - start.getTime()) / 60_000;
   if (!Number.isInteger(minutes) || minutes <= 0 || minutes > MAX_REBUILD_MINUTES) {
@@ -166,6 +168,7 @@ export async function rebuildAccountMetrics(
     const result = await runWindow({ start: new Date(cursor), end: new Date(Math.min(cursor + 10 * 60_000, end.getTime())) });
     total.readCount += result.readCount; total.writeCount += result.writeCount; total.ignoredCount += result.ignoredCount;
   }
+  await refreshSnapshots?.();
   return total;
 }
 
@@ -204,7 +207,9 @@ export async function runAccountObservabilityCycle(now = new Date()): Promise<{ 
     const sync = now.getUTCMinutes() % 5 === 0
       ? await syncSub2ApiAccounts(client, prisma)
       : { readCount: 0, ignoredCount: 0 };
-    const metrics = await productionMetricRunner(client)(completeMetricWindow(now));
+    const metricRunner = productionMetricRunner(client);
+    const metrics = await metricRunner(completeMetricWindow(now));
+    await refreshAccountMetricSnapshots(now);
     await evaluateAccountAlerts(now);
     return { skipped: false, readCount: sync.readCount + metrics.readCount, ignoredCount: sync.ignoredCount + metrics.ignoredCount, writeCount: metrics.writeCount };
   } catch (error) {
@@ -220,7 +225,12 @@ export async function runAccountMetricRebuild(start: Date, end: Date): Promise<M
   const client = createSub2ApiReadonlyClient();
   try {
     await querySchemaCapabilities(client);
-    return await rebuildAccountMetrics(start, end, productionMetricRunner(client, 'REBUILD'));
+    return await rebuildAccountMetrics(
+      start,
+      end,
+      productionMetricRunner(client, 'REBUILD'),
+      async () => { await refreshAccountMetricSnapshots(new Date()); },
+    );
   } finally {
     await client.$disconnect();
   }

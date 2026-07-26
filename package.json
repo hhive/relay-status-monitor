@@ -15,7 +15,8 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "db:migrate:alert-channels": "tsx prisma/migrate-alert-channel-config.ts",
-    "account-metrics:rebuild": "tsx scripts/rebuild-account-metrics.ts"
+    "account-metrics:rebuild": "tsx scripts/rebuild-account-metrics.ts",
+    "account-snapshots:refresh": "tsx scripts/refresh-account-metric-snapshots.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

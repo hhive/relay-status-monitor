@@ -123,3 +123,19 @@ test('rebuild stops after the first failed batch and never executes later window
   ), /source failed/);
   assert.equal(attempts, 2);
 });
+
+test('bounded rebuild refreshes snapshots once after the final metric batch', async () => {
+  const order: string[] = [];
+  await rebuildAccountMetrics(
+    new Date('2026-07-25T00:00:00Z'),
+    new Date('2026-07-25T00:25:00Z'),
+    async () => { order.push('batch'); return { readCount: 0, writeCount: 0, ignoredCount: 0 }; },
+    async () => { order.push('snapshot'); },
+  );
+  assert.deepEqual(order, ['batch', 'batch', 'batch', 'snapshot']);
+});
+
+test('production collection refreshes after metric writes and before alerts', () => {
+  const source = readFileSync(new URL('../src/lib/account-observability/collector.ts', import.meta.url), 'utf8');
+  assert.match(source, /await metricRunner\(completeMetricWindow\(now\)\);[\s\S]*await refreshAccountMetricSnapshots\(now\);[\s\S]*await evaluateAccountAlerts\(now\);/);
+});

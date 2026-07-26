@@ -1,12 +1,14 @@
 export type AccountWindowKey = 'today' | 'last1h' | 'last24h';
 export type AccountStatusFilter = 'schedulable' | 'all' | 'unschedulable';
+export const ACCOUNT_PAGE_SIZES = [20, 50, 100] as const;
+export type AccountPageSize = (typeof ACCOUNT_PAGE_SIZES)[number];
 
 export interface AccountWindowDto {
   key: AccountWindowKey;
   label: string;
   start: string;
   end: string;
-  lastCompleteMinute: string;
+  lastCompleteMinute: string | null;
   expectedMinutes: number;
 }
 
@@ -69,6 +71,55 @@ export interface AccountSummaryDto {
   metrics: AccountMetricAggregateDto;
 }
 
+export interface AccountListItemDto {
+  id: number;
+  name: string;
+  platform: string | null;
+  type: string | null;
+  remoteStatus: string | null;
+  schedulable: boolean | null;
+  syncState: string;
+  groupProjection: unknown;
+  lastSyncedAt: string | null;
+  lastCompleteMinute: string | null;
+  alertEnabled: boolean;
+  metrics: Pick<AccountMetricAggregateDto,
+    'eligibleCount' | 'availability' | 'errorRate' | 'durationP95Ms' | 'firstTokenP95Ms' |
+    'cacheHitRate' | 'userBilledUsd' | 'accountBilledUsd'>;
+}
+
+export interface AccountListResponseDto {
+  accounts: AccountListItemDto[];
+  facets: { platforms: string[] };
+  pagination: {
+    page: number;
+    pageSize: AccountPageSize;
+    totalItems: number;
+    totalPages: number;
+  };
+  window: AccountWindowDto;
+  snapshot: {
+    computedAt: string;
+    lastCompleteMinute: string | null;
+  };
+}
+
+export interface AccountListQueryInput {
+  windowKey: AccountWindowKey;
+  filters: {
+    status: AccountStatusFilter;
+    platform: string | null;
+    group: string | null;
+    search: string | null;
+  };
+  page: number;
+  pageSize: AccountPageSize;
+  sort: {
+    key: import('./account-list-sort').AccountSortKey;
+    order: import('./account-list-sort').AccountSortOrder;
+  };
+}
+
 export interface AccountOverviewDto {
   window: AccountWindowDto;
   coverage: AccountCoverageDto;
@@ -86,6 +137,8 @@ export interface AccountOverviewDto {
   accounts: AccountSummaryDto[];
   openAlertCount: number;
 }
+
+export type AccountOverviewResponseDto = Omit<AccountOverviewDto, 'accounts'>;
 
 export interface AccountDetailDto extends AccountSummaryDto {
   window: AccountWindowDto;

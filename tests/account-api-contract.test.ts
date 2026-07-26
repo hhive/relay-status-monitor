@@ -10,6 +10,28 @@ test('account API is session guarded and does not expose raw database or sensiti
   assert.doesNotMatch(`${route}\n${detail}`, /credentials|request_body|error_body|DATABASE_URL|histogram/i);
 });
 
+test('paginated account list is guarded and maps validation and availability errors', () => {
+  const route = readFileSync(new URL('../src/app/api/accounts/list/route.ts', import.meta.url), 'utf8');
+  const overview = readFileSync(new URL('../src/app/api/accounts/overview/route.ts', import.meta.url), 'utf8');
+  const dto = readFileSync(new URL('../src/lib/account-observability-ui.ts', import.meta.url), 'utf8');
+  assert.match(route, /await requireApiSession\(\)/);
+  assert.match(route, /parseAccountListQuery/);
+  assert.match(route, /AccountQueryValidationError/);
+  assert.match(route, /status:\s*400/);
+  assert.match(route, /AccountSnapshotUnavailableError/);
+  assert.match(route, /账号指标快照暂不可用/);
+  assert.match(route, /账号列表暂不可用/);
+  assert.match(route, /status:\s*503/);
+  assert.match(overview, /const \{ accounts, \.\.\.overview \}/);
+  assert.match(overview, /void accounts/);
+  assert.doesNotMatch(overview, /_accounts/);
+  assert.doesNotMatch(overview, /NextResponse\.json\(await getAccountOverview/);
+  const snapshot = dto.match(/snapshot:\s*\{[\s\S]*?\n\s*\};/)?.[0] ?? '';
+  assert.match(snapshot, /computedAt:\s*string/);
+  assert.match(snapshot, /lastCompleteMinute:\s*string\s*\|\s*null/);
+  assert.doesNotMatch(snapshot, /batchId/);
+});
+
 test('account overview and detail expose the approved operational controls and windows', () => {
   const overview = [
     '../src/app/(dashboard)/accounts/page.tsx',
@@ -43,9 +65,10 @@ test('account overview and detail expose the approved operational controls and w
 
   const query = readFileSync(new URL('../src/lib/account-observability/query.ts', import.meta.url), 'utf8');
   assert.match(query, /groupProjection: account\.groupProjection/);
-  assert.match(query, /averageDurationMs:/);
-  assert.match(query, /errorRate:/);
-  assert.match(query, /cacheHitRate:/);
+  const aggregate = readFileSync(new URL('../src/lib/account-observability/metric-aggregate.ts', import.meta.url), 'utf8');
+  assert.match(aggregate, /averageDurationMs:/);
+  assert.match(aggregate, /errorRate:/);
+  assert.match(aggregate, /cacheHitRate:/);
   assert.match(query, /lastCompleteMinute:/);
   assert.match(query, /bucketStart: \{ gte: window\.start, lt: window\.end \}/);
   assert.doesNotMatch(query, /take: 1440/);

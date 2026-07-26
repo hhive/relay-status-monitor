@@ -22,7 +22,7 @@ test('metric definitions are centralized and preserve no-data versus zero-cost s
   assert.match(definitions.ACCOUNT_METRIC_DEFINITIONS.accountBilledUsd.formula, /rate_multiplier/i);
 });
 
-test('root overview and account list use the server-authoritative overview response', () => {
+test('root overview and account list split server-authoritative overview and list responses', () => {
   const dashboard = source('src/app/(dashboard)/page.tsx');
   const accounts = source('src/app/(dashboard)/accounts/page.tsx');
   const shared = source('src/components/account-observability/account-overview.tsx');
@@ -31,6 +31,7 @@ test('root overview and account list use the server-authoritative overview respo
   assert.doesNotMatch(dashboard, /\/api\/dashboard|upstreamKeyId/);
   assert.match(accounts, /AccountOverview/);
   assert.match(shared, /\/api\/accounts\/overview\?/);
+  assert.match(shared, /\/api\/accounts\/list\?/);
   assert.match(shared, /useState<AccountWindowKey>\('last1h'\)/);
   assert.match(shared, /useState<AccountStatusFilter>\('schedulable'\)/);
   assert.match(shared, /params\.set\('platform'/);
@@ -38,8 +39,14 @@ test('root overview and account list use the server-authoritative overview respo
   assert.match(shared, /params\.set\('search'/);
   assert.match(shared, /sticky top-0/);
   assert.match(shared, /md:hidden/);
-  const firstTokenListUses = shared.match(/'firstTokenP95Ms'/g) ?? [];
-  assert.ok(firstTokenListUses.length >= 4, 'first Token P95 must appear in summary, trend, desktop list, and mobile list');
+  assert.match(shared, /const SUMMARY_METRICS[^\n]*'firstTokenP95Ms'/);
+  assert.match(shared, /const TREND_VIEWS[\s\S]*?'firstTokenP95Ms'/);
+  assert.match(shared, /const ACCOUNT_LIST_METRICS[^\n]*'firstTokenP95Ms'/);
+
+  const tableRow = shared.match(/function AccountTableRow[\s\S]*?\n\}/)?.[0] ?? '';
+  const mobileRow = shared.match(/function AccountMobileRow[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.match(tableRow, /ACCOUNT_LIST_METRICS\.map/);
+  assert.match(mobileRow, /ACCOUNT_LIST_METRICS\.filter\(\(key\) => key !== 'eligibleCount'\)\.map/);
 });
 
 test('account list and detail expose a per-account alert master switch', () => {
@@ -48,7 +55,7 @@ test('account list and detail expose a per-account alert master switch', () => {
   assert.match(shared, /Switch/);
   assert.match(shared, /account\.alertEnabled/);
   assert.match(shared, /告警/);
-  assert.match(shared, /result === 'saved'[\s\S]*?fetchOverview\(\)/, 'a successful toggle must supersede stale overview requests');
+  assert.match(shared, /result === 'saved'[\s\S]*?fetchList\(\)/, 'a successful toggle must refresh the current server page');
 
   const detail = source('src/app/(dashboard)/accounts/[id]/page.tsx');
   assert.match(detail, /masterAlertEnabled/);
@@ -65,7 +72,9 @@ test('account list exposes persisted sorting on desktop and mobile', async () =>
   assert.equal(sort.ACCOUNT_SORT_KEYS.length, 13);
   assert.match(shared, /readAccountSortStateSafely\(\(\) => window\.localStorage\)/);
   assert.match(shared, /setSortState\(next\);[\s\S]*?writeAccountSortStateSafely\(\(\) => window\.localStorage, next\)/);
-  assert.match(shared, /sortAccountSummaries/);
+  assert.doesNotMatch(shared, /sortAccountSummaries/);
+  assert.match(shared, /sortKey: sortState\.key/);
+  assert.match(shared, /sortOrder: sortState\.order/);
   assert.match(shared, /aria-sort=/);
   assert.match(shared, /ArrowUpDown/);
   assert.match(shared, /ArrowUp/);

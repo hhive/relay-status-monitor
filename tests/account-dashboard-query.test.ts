@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { filterAccounts, parseAccountFilters } from '../src/lib/account-observability/filters';
 import { buildAccountOverview, getAccountDetail } from '../src/lib/account-observability/query';
+import { aggregateMetricMinutes } from '../src/lib/account-observability/metric-aggregate';
 import { parseAccountWindow, resolveAccountWindow } from '../src/lib/account-observability/window';
 
 function source(path: string): string {
@@ -82,6 +83,11 @@ test('overview aggregates raw counts and histograms and reports coverage for the
   assert.equal(result.accounts[0].alertEnabled, true, 'missing alertEnabled defaults to enabled');
   assert.equal(result.accounts[1].alertEnabled, false, 'alertEnabled reflects the stored flag');
   assert.equal(result.openAlertCount, 2);
+});
+
+test('dashboard query uses the shared metric aggregate', () => {
+  assert.equal(typeof aggregateMetricMinutes, 'function');
+  assert.match(source('src/lib/account-observability/query.ts'), /aggregateMetricMinutes/);
 });
 
 test('today and 24 hour trends use stable five-minute buckets while one hour stays minute-grained', () => {
