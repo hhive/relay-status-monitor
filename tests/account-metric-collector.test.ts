@@ -18,12 +18,14 @@ test('production cycle checks source schema before account or metric writes', ()
 test('server rebuild command requires explicit UTC bounds and reuses production window runner', () => {
   const collector = readFileSync(new URL('../src/lib/account-observability/collector.ts', import.meta.url), 'utf8');
   const command = readFileSync(new URL('../scripts/rebuild-account-metrics.ts', import.meta.url), 'utf8');
+  const crypto = readFileSync(new URL('../src/lib/crypto.ts', import.meta.url), 'utf8');
   assert.match(collector, /export async function runAccountMetricRebuild/);
   assert.match(command, /--start/);
   assert.match(command, /--end/);
   assert.match(command, /runAccountMetricRebuild/);
   assert.match(command, /async function main\(\)/);
   assert.match(command, /main\(\)\.catch/);
+  assert.doesNotMatch(crypto, /from ['"]@\//);
   assert.match(collector, /productionMetricRunner\(client, 'REBUILD'\)/);
 });
 

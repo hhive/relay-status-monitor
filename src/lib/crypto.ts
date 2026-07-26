@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
-import { resolveApplicationSecrets } from '@/lib/auth-config';
+import { resolveApplicationSecrets } from './auth-config';
 
 /**
  * AES-256-GCM 加密工具
