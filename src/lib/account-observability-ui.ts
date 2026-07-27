@@ -90,7 +90,10 @@ export interface AccountListItemDto {
 
 export interface AccountListResponseDto {
   accounts: AccountListItemDto[];
-  facets: { platforms: string[] };
+  facets: {
+    platforms: string[];
+    groups: Array<{ id: number; name: string }>;
+  };
   pagination: {
     page: number;
     pageSize: AccountPageSize;
@@ -109,7 +112,7 @@ export interface AccountListQueryInput {
   filters: {
     status: AccountStatusFilter;
     platform: string | null;
-    group: string | null;
+    groupId: number | null;
     search: string | null;
   };
   page: number;
@@ -126,7 +129,7 @@ export interface AccountOverviewDto {
   filters: {
     status: AccountStatusFilter;
     platform: string | null;
-    group: string | null;
+    groupId: number | null;
     search: string | null;
   };
   summary: AccountMetricAggregateDto & {

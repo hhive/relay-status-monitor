@@ -35,7 +35,7 @@ test('root overview and account list split server-authoritative overview and lis
   assert.match(shared, /useState<AccountWindowKey>\('last1h'\)/);
   assert.match(shared, /useState<AccountStatusFilter>\('schedulable'\)/);
   assert.match(shared, /params\.set\('platform'/);
-  assert.match(shared, /params\.set\('group'/);
+  assert.match(shared, /params\.set\('groupId'/);
   assert.match(shared, /params\.set\('search'/);
   assert.match(shared, /sticky top-0/);
   assert.match(shared, /md:hidden/);
@@ -47,6 +47,24 @@ test('root overview and account list split server-authoritative overview and lis
   const mobileRow = shared.match(/function AccountMobileRow[\s\S]*?\n\}/)?.[0] ?? '';
   assert.match(tableRow, /ACCOUNT_LIST_METRICS\.map/);
   assert.match(mobileRow, /ACCOUNT_LIST_METRICS\.filter\(\(key\) => key !== 'eligibleCount'\)\.map/);
+});
+
+test('account filters restore reusable preferences and render exact bound-group options', () => {
+  const shared = source('src/components/account-observability/account-overview.tsx');
+
+  assert.match(shared, /readAccountFilterPreferencesSafely\(\(\) => window\.localStorage\)/);
+  assert.match(shared, /const \[filtersReady, setFiltersReady\] = useState\(false\)/);
+  assert.match(shared, /if \(!filtersReady/);
+  assert.match(shared, /writeAccountFilterPreferencesSafely\(\(\) => window\.localStorage/);
+  assert.match(shared, /groupId: number \| null/);
+  assert.match(shared, /aria-label="筛选分组"/);
+  assert.match(shared, /全部分组/);
+  assert.match(shared, /facets\.groups/);
+  assert.match(shared, /group\.id/);
+  assert.match(shared, /group\.name/);
+  assert.match(shared, /setPlatform\(''\)/);
+  assert.match(shared, /setGroupId\(null\)/);
+  assert.doesNotMatch(shared, /<Input value=\{group/);
 });
 
 test('account list and detail expose a per-account alert master switch', () => {

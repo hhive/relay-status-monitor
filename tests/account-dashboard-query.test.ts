@@ -38,8 +38,13 @@ test('account query functions default to the last one hour window', () => {
 test('status, platform, group, and search filters apply to the same account collection', () => {
   assert.deepEqual(filterAccounts(accounts, parseAccountFilters(new URLSearchParams())).map((row) => row.id), [1]);
   assert.deepEqual(filterAccounts(accounts, parseAccountFilters(new URLSearchParams('status=unschedulable'))).map((row) => row.id), [2]);
-  assert.deepEqual(filterAccounts(accounts, parseAccountFilters(new URLSearchParams('status=all&platform=openai&group=Premium&search=alpha'))).map((row) => row.id), [1]);
+  assert.deepEqual(filterAccounts(accounts, parseAccountFilters(new URLSearchParams('status=all&platform=openai&groupId=7&search=alpha'))).map((row) => row.id), [1]);
+  assert.deepEqual(filterAccounts(accounts, parseAccountFilters(new URLSearchParams('status=all&groupId=8'))).map((row) => row.id), [2]);
+  assert.deepEqual(filterAccounts(accounts, parseAccountFilters(new URLSearchParams('status=all&groupId=1'))).map((row) => row.id), []);
   assert.throws(() => parseAccountFilters(new URLSearchParams('status=retired')), /status/i);
+  for (const groupId of ['0', '-1', '1.2', '7x', '9007199254740992']) {
+    assert.throws(() => parseAccountFilters(new URLSearchParams(`groupId=${groupId}`)), /group/i);
+  }
 });
 
 test('overview aggregates raw counts and histograms and reports coverage for the filtered account set', () => {
@@ -55,7 +60,7 @@ test('overview aggregates raw counts and histograms and reports coverage for the
   });
   const result = buildAccountOverview({
     accounts: accounts.slice(0, 2), window,
-    filters: { status: 'all', platform: null, group: null, search: null },
+    filters: { status: 'all', platform: null, groupId: null, search: null },
     minutes: [
       minute(1, '2026-07-25T12:00:00Z', { successCount: 90, upstreamErrorCount: 10, eligibleCount: 100, durationCount: 100, durationSumMs: BigInt(10_000), durationHistogram: { '100': 95, '1000': 5 }, userBilledUsd: '9007199254.740991', accountBilledUsd: '1.000001' }),
       minute(2, '2026-07-25T12:00:00Z', { successCount: 0, upstreamErrorCount: 1, eligibleCount: 1, durationCount: 100, durationSumMs: BigInt(200_000), durationHistogram: { '2000': 100 }, inputTokens: BigInt(100), cacheReadTokens: BigInt(25), cacheCreationTokens: BigInt(5), userBilledUsd: '0.000009', accountBilledUsd: '2.000009' }),
@@ -111,7 +116,7 @@ test('today and 24 hour trends use stable five-minute buckets while one hour sta
   const base = {
     accounts: [accounts[0]],
     minutes: rows,
-    filters: { status: 'all' as const, platform: null, group: null, search: null },
+    filters: { status: 'all' as const, platform: null, groupId: null, search: null },
     latestMetricRun: { status: 'SUCCEEDED', scanEnd: new Date('2026-07-25T12:10:00Z') },
     openAlertCount: 0,
   };
@@ -134,7 +139,7 @@ test('coverage distinguishes pre-backfill gaps from collection delay', () => {
     durationCount: 0, durationSumMs: BigInt(0), durationHistogram: {}, firstTokenHistogram: {}, inputTokens: BigInt(0),
     cacheReadTokens: BigInt(0), cacheCreationTokens: BigInt(0), userBilledUsd: '0', accountBilledUsd: '0',
   });
-  const base = { accounts: [accounts[0]], window, filters: { status: 'all' as const, platform: null, group: null, search: null }, openAlertCount: 0 };
+  const base = { accounts: [accounts[0]], window, filters: { status: 'all' as const, platform: null, groupId: null, search: null }, openAlertCount: 0 };
   assert.equal(buildAccountOverview({ ...base, minutes: [row('2026-07-25T12:01:00Z')], latestMetricRun: null }).coverage.status, 'before_backfill');
   assert.equal(buildAccountOverview({ ...base, minutes: [row('2026-07-25T12:00:00Z')], latestMetricRun: { status: 'SUCCEEDED', scanEnd: new Date('2026-07-25T12:01:00Z') } }).coverage.status, 'collection_delay');
 });

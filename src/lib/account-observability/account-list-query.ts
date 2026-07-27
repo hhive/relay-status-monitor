@@ -54,6 +54,11 @@ interface AccountListTransaction {
   $queryRaw<T>(query: Prisma.Sql): Promise<T>;
 }
 
+interface AccountGroupFacetRow {
+  id: string;
+  name: string;
+}
+
 interface AccountListClient {
   $transaction<T>(
     work: (tx: AccountListTransaction) => Promise<T>,
@@ -66,6 +71,7 @@ const WINDOW_LABELS = {
   last1h: '近 1 小时',
   last24h: '近 24 小时',
 } as const;
+const groupFacetCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
 
 function positiveInteger(value: string | null, fallback: number, name: string): number {
   if (value === null) return fallback;
@@ -137,8 +143,14 @@ function accountFilterSql(filters: AccountFilters, includePlatform: boolean): Pr
   if (includePlatform && filters.platform) {
     conditions.push(Prisma.sql`lower(a."platform") = lower(${filters.platform})`);
   }
-  if (filters.group) {
-    conditions.push(Prisma.sql`strpos(lower(a.group_filter_text), lower(${filters.group})) > 0`);
+  if (filters.groupId !== null) {
+    conditions.push(Prisma.sql`EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(
+        CASE WHEN jsonb_typeof(a."groupProjection") = 'array' THEN a."groupProjection" ELSE '[]'::jsonb END
+      ) AS selected_group(value)
+      WHERE selected_group.value->>'id' = ${String(filters.groupId)}
+    )`);
   }
   if (filters.search) {
     conditions.push(Prisma.sql`strpos(lower(concat_ws(' ', a."name", a."platform", a.group_filter_text)), lower(${filters.search})) > 0`);
@@ -186,14 +198,41 @@ function orderBySql(key: AccountSortKey, order: AccountSortOrder, requestNow: Da
   ], ', ');
 }
 
-function buildPlatformFacetQuery(input: AccountListQueryInput): Prisma.Sql {
-  const where = accountFilterSql(input.filters, false);
+function buildPlatformFacetQuery(): Prisma.Sql {
   return Prisma.sql`${accountTextCte()}
     SELECT a."platform" AS platform
     FROM account_text a
-    WHERE ${where} AND a."platform" IS NOT NULL AND a."platform" <> ''
+    WHERE a."syncState" = 'ACTIVE' AND a."platform" IS NOT NULL AND a."platform" <> ''
     GROUP BY a."platform"
     ORDER BY LOWER(a."platform") ASC`;
+}
+
+function buildGroupFacetQuery(): Prisma.Sql {
+  return Prisma.sql`
+    SELECT group_item.value->>'id' AS id, BTRIM(group_item.value->>'name') AS name
+    FROM "Sub2ApiAccount" a
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(a."groupProjection") = 'array' THEN a."groupProjection" ELSE '[]'::jsonb END
+    ) AS group_item(value)
+    WHERE a."syncState" = 'ACTIVE'
+      AND jsonb_typeof(group_item.value->'id') IN ('number', 'string')
+      AND group_item.value->>'id' ~ '^[1-9][0-9]*$'
+      AND jsonb_typeof(group_item.value->'name') = 'string'
+      AND BTRIM(group_item.value->>'name') <> ''
+    GROUP BY group_item.value->>'id', BTRIM(group_item.value->>'name')
+    ORDER BY LOWER(BTRIM(group_item.value->>'name')) ASC, group_item.value->>'id' ASC`;
+}
+
+function groupFacets(rows: AccountGroupFacetRow[]): Array<{ id: number; name: string }> {
+  const groups = new Map<number, string>();
+  for (const row of rows) {
+    const id = Number(row.id);
+    const name = row.name.trim();
+    if (!/^[1-9]\d*$/.test(row.id) || !Number.isSafeInteger(id) || name === '' || groups.has(id)) continue;
+    groups.set(id, name);
+  }
+  return Array.from(groups, ([id, name]) => ({ id, name })).sort((left, right) =>
+    groupFacetCollator.compare(left.name, right.name) || left.id - right.id);
 }
 
 function buildAccountCountQuery(input: AccountListQueryInput): Prisma.Sql {
@@ -284,7 +323,8 @@ export async function getAccountList(
     });
     if (!batch) throw new AccountSnapshotUnavailableError();
 
-    const platformRows = await tx.$queryRaw<Array<{ platform: string }>>(buildPlatformFacetQuery(input));
+    const platformRows = await tx.$queryRaw<Array<{ platform: string }>>(buildPlatformFacetQuery());
+    const groupRows = await tx.$queryRaw<AccountGroupFacetRow[]>(buildGroupFacetQuery());
     const countRows = await tx.$queryRaw<Array<{ total: bigint }>>(buildAccountCountQuery(input));
     const totalValue = countRows[0]?.total ?? BigInt(0);
     if (totalValue > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('account count exceeds safe integer range');
@@ -296,7 +336,10 @@ export async function getAccountList(
     );
     return {
       accounts: rows.map(listItem),
-      facets: { platforms: platformRows.map((row) => row.platform) },
+      facets: {
+        platforms: platformRows.map((row) => row.platform),
+        groups: groupFacets(groupRows),
+      },
       pagination: { page, pageSize: input.pageSize, totalItems, totalPages },
       window: windowDto(input, batch),
       snapshot: {

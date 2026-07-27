@@ -15,19 +15,20 @@ test('account list owns an independent paginated request with complete query sta
   assert.match(shared, /useState<AccountPageSize>\(50\)/);
   assert.match(shared, /useState\(1\)/);
   assert.match(shared, /const \[sortReady, setSortReady\] = useState\(false\)/);
+  assert.match(shared, /const \[filtersReady, setFiltersReady\] = useState\(false\)/);
   assert.match(shared, /const overviewSequence = useRef\(0\)/);
   assert.match(shared, /const listSequence = useRef\(0\)/);
-  assert.match(shared, /if \(!sortReady\) return/);
+  assert.match(shared, /if \(!filtersReady \|\| !sortReady\) return/);
   assert.match(shared, /\/api\/accounts\/list\?\$\{params(?:\.toString\(\))?\}/);
   for (const key of ['window', 'status', 'sortKey', 'sortOrder', 'page', 'pageSize']) {
     assert.match(shared, new RegExp(`${key}(?:\\s*:|\\s*,)`), `list request must include ${key}`);
   }
-  for (const key of ['platform', 'group', 'search']) {
+  for (const key of ['platform', 'groupId', 'search']) {
     assert.match(shared, new RegExp(`params\\.set\\('${key}'`), `list request must include optional ${key}`);
   }
-  assert.match(shared, /setPage\(body\.pagination\.page\)/);
+  assert.match(shared, /setPage\(correctedFilters \? 1 : body\.pagination\.page\)/);
   assert.match(shared, /listOnly[\s\S]*?fetchList/);
-  assert.match(shared, /if \(listOnly\) return/);
+  assert.match(shared, /if \(!filtersReady \|\| listOnly\) return/);
 });
 
 test('account list resets page for query changes and debounces search', () => {
@@ -35,10 +36,10 @@ test('account list resets page for query changes and debounces search', () => {
 
   assert.match(shared, /window\.setTimeout\([\s\S]*?250\)/);
   assert.match(shared, /setDeferredSearch\(search\.trim\(\)\);[\s\S]*?setPage\(1\)/);
-  for (const handler of ['changeWindow', 'changeStatus', 'changePlatform', 'changeGroup', 'updateSort']) {
+  for (const handler of ['changeWindow', 'changeStatus', 'changePlatform', 'changeGroup', 'changePageSize', 'updateSort']) {
     assert.match(shared, new RegExp(`const ${handler} =[\\s\\S]*?setPage\\(1\\)`), `${handler} must reset the page`);
   }
-  assert.match(shared, /setPageSize\(Number\(value\) as AccountPageSize\);[\s\S]*?setPage\(1\)/);
+  assert.match(shared, /writeAccountFilterPreferencesSafely/);
 });
 
 test('pagination renders server rows, page sizes, ranges and accessible boundaries', () => {

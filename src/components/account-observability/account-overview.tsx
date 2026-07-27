@@ -25,6 +25,12 @@ import {
   type AccountSortKey,
   type AccountSortState,
 } from '@/lib/account-list-sort';
+import {
+  readAccountFilterPreferencesSafely,
+  reconcileAccountFilterPreferences,
+  writeAccountFilterPreferencesSafely,
+  type AccountFilterPreferences,
+} from '@/lib/account-list-filters';
 import { formatAccountMetric, type AccountAggregateMetricKey, type AccountMetricKey } from '@/lib/account-metric-definitions';
 import {
   ACCOUNT_PAGE_SIZES,
@@ -71,13 +77,14 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   const [windowKey, setWindowKey] = useState<AccountWindowKey>('last1h');
   const [status, setStatus] = useState<AccountStatusFilter>('schedulable');
   const [platform, setPlatform] = useState('');
-  const [group, setGroup] = useState('');
+  const [groupId, setGroupId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [deferredSearch, setDeferredSearch] = useState('');
   const [trendView, setTrendView] = useState<keyof typeof TREND_VIEWS>('quality');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<AccountPageSize>(50);
   const [sortReady, setSortReady] = useState(false);
+  const [filtersReady, setFiltersReady] = useState(false);
   const [overviewLoading, setOverviewLoading] = useState(!listOnly);
   const [listLoading, setListLoading] = useState(true);
   const [overviewRefreshing, setOverviewRefreshing] = useState(false);
@@ -99,17 +106,38 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   }, [search]);
 
   useEffect(() => {
+    const filters = readAccountFilterPreferencesSafely(() => window.localStorage);
+    setWindowKey(filters.windowKey);
+    setStatus(filters.status);
+    setPlatform(filters.platform);
+    setGroupId(filters.groupId);
+    setPageSize(filters.pageSize);
+    setFiltersReady(true);
+  }, []);
+
+  useEffect(() => {
     setSortState(readAccountSortStateSafely(() => window.localStorage));
     setSortReady(true);
   }, []);
 
+  const persistFilters = useCallback((overrides: Partial<AccountFilterPreferences> = {}) => {
+    writeAccountFilterPreferencesSafely(() => window.localStorage, {
+      windowKey,
+      status,
+      platform,
+      groupId,
+      pageSize,
+      ...overrides,
+    });
+  }, [groupId, pageSize, platform, status, windowKey]);
+
   const fetchOverview = useCallback(async () => {
-    if (listOnly) return;
+    if (!filtersReady || listOnly) return;
     const isCurrent = beginLatestRequest(overviewSequence);
     setOverviewLoading(true);
     const params = new URLSearchParams({ window: windowKey, status });
     if (platform) params.set('platform', platform);
-    if (group.trim()) params.set('group', group.trim());
+    if (groupId !== null) params.set('groupId', String(groupId));
     if (deferredSearch) params.set('search', deferredSearch);
     try {
       const response = await apiFetch(`/api/accounts/overview?${params.toString()}`);
@@ -126,10 +154,10 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
         setOverviewRefreshing(false);
       }
     }
-  }, [deferredSearch, group, listOnly, platform, status, windowKey]);
+  }, [deferredSearch, filtersReady, groupId, listOnly, platform, status, windowKey]);
 
   const fetchList = useCallback(async () => {
-    if (!sortReady) return;
+    if (!filtersReady || !sortReady) return;
     const isCurrent = beginLatestRequest(listSequence);
     setListLoading(true);
     const params = new URLSearchParams({
@@ -141,15 +169,21 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
       pageSize: String(pageSize),
     });
     if (platform) params.set('platform', platform);
-    if (group.trim()) params.set('group', group.trim());
+    if (groupId !== null) params.set('groupId', String(groupId));
     if (deferredSearch) params.set('search', deferredSearch);
     try {
       const response = await apiFetch(`/api/accounts/list?${params}`);
       const body = await response.json() as AccountListResponseDto & { error?: string };
       if (!response.ok) throw new Error(body.error || '账号列表暂不可用');
       if (!isCurrent()) return;
+      const currentFilters = { windowKey, status, platform, groupId, pageSize };
+      const nextFilters = reconcileAccountFilterPreferences(currentFilters, body.facets);
+      const correctedFilters = nextFilters !== currentFilters;
+      if (nextFilters.platform !== platform) setPlatform('');
+      if (nextFilters.groupId !== groupId) setGroupId(null);
+      if (correctedFilters) persistFilters(nextFilters);
       setList(body);
-      setPage(body.pagination.page);
+      setPage(correctedFilters ? 1 : body.pagination.page);
       setListError(null);
     } catch (reason) {
       if (isCurrent()) setListError(reason instanceof Error ? reason.message : '账号列表暂不可用');
@@ -159,7 +193,7 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
         setListRefreshing(false);
       }
     }
-  }, [deferredSearch, group, page, pageSize, platform, sortReady, sortState, status, windowKey]);
+  }, [deferredSearch, filtersReady, groupId, page, pageSize, persistFilters, platform, sortReady, sortState, status, windowKey]);
 
   useEffect(() => { void fetchOverview(); }, [fetchOverview]);
   useEffect(() => { void fetchList(); }, [fetchList]);
@@ -192,10 +226,20 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
     if (result === 'failed') toast.error('账号告警开关保存失败');
   }, [fetchList]);
 
-  const changeWindow = (value: AccountWindowKey) => { setPage(1); setWindowKey(value); };
-  const changeStatus = (value: AccountStatusFilter) => { setPage(1); setStatus(value); };
-  const changePlatform = (value: string) => { setPage(1); setPlatform(value === 'all' ? '' : value); };
-  const changeGroup = (value: string) => { setPage(1); setGroup(value); };
+  const changeWindow = (value: AccountWindowKey) => { setPage(1); setWindowKey(value); persistFilters({ windowKey: value }); };
+  const changeStatus = (value: AccountStatusFilter) => { setPage(1); setStatus(value); persistFilters({ status: value }); };
+  const changePlatform = (value: string) => {
+    const next = value === 'all' ? '' : value;
+    setPage(1); setPlatform(next); persistFilters({ platform: next });
+  };
+  const changeGroup = (value: string) => {
+    const next = value === 'all' ? null : Number(value);
+    setPage(1); setGroupId(next); persistFilters({ groupId: next });
+  };
+  const changePageSize = (value: string) => {
+    const next = Number(value) as AccountPageSize;
+    setPage(1); setPageSize(next); persistFilters({ pageSize: next });
+  };
   const updateSort = useCallback((next: AccountSortState) => {
     setPage(1);
     setSortState(next);
@@ -269,10 +313,10 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
           <h2 id="account-list-heading" className="text-sm font-semibold">账号列表</h2>
           <span className="text-xs text-muted-foreground">{list?.pagination.totalItems ?? 0} 个账号</span>
         </div>
-        <AccountFilters search={search} onSearch={setSearch} platform={platform} onPlatform={changePlatform} group={group} onGroup={changeGroup} platforms={list?.facets.platforms ?? []} />
+        <AccountFilters search={search} onSearch={setSearch} platform={platform} onPlatform={changePlatform} groupId={groupId} onGroup={changeGroup} platforms={list?.facets.platforms ?? []} groups={list?.facets.groups ?? []} />
         {listError ? <div role="alert" className="flex items-center gap-2 rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"><AlertCircle className="size-4 shrink-0" />{listError}{list ? '，已保留上次列表' : ''}</div> : null}
         {listLoading && !list ? <Skeleton className="h-64" /> : list
-          ? <AccountList data={list} accounts={list.accounts} coverage={overview?.coverage} pageSize={pageSize} onPageSizeChange={(value) => { setPageSize(Number(value) as AccountPageSize); setPage(1); }} onPageChange={setPage} sortState={sortState} onSort={toggleSortKey} onSortChange={updateSort} pendingAlertAccounts={pendingAlertAccounts} onToggleAlert={toggleAlert} />
+          ? <AccountList data={list} accounts={list.accounts} coverage={overview?.coverage} pageSize={pageSize} onPageSizeChange={changePageSize} onPageChange={setPage} sortState={sortState} onSort={toggleSortKey} onSortChange={updateSort} pendingAlertAccounts={pendingAlertAccounts} onToggleAlert={toggleAlert} />
           : <div className="rounded-md border py-12 text-center text-sm text-muted-foreground">无法加载账号列表</div>}
       </section>
     </div>
@@ -292,11 +336,11 @@ function SummaryGrid({ data }: { data: AccountOverviewResponseDto }) {
   </div>;
 }
 
-function AccountFilters({ search, onSearch, platform, onPlatform, group, onGroup, platforms }: { search: string; onSearch: (value: string) => void; platform: string; onPlatform: (value: string) => void; group: string; onGroup: (value: string) => void; platforms: string[] }) {
+function AccountFilters({ search, onSearch, platform, onPlatform, groupId, onGroup, platforms, groups }: { search: string; onSearch: (value: string) => void; platform: string; onPlatform: (value: string) => void; groupId: number | null; onGroup: (value: string) => void; platforms: string[]; groups: Array<{ id: number; name: string }> }) {
   return <div className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_12rem_12rem]">
     <div className="relative min-w-0"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input type="search" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索账号、平台或分组" className="pl-9" /></div>
     <Select value={platform || 'all'} onValueChange={(value) => onPlatform(value === 'all' ? '' : value)}><SelectTrigger aria-label="筛选平台"><SelectValue placeholder="筛选平台" /></SelectTrigger><SelectContent><SelectItem value="all">全部平台</SelectItem>{platforms.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select>
-    <Input value={group} onChange={(event) => onGroup(event.target.value)} placeholder="筛选分组" aria-label="筛选分组" />
+    <Select value={groupId === null ? 'all' : String(groupId)} onValueChange={onGroup}><SelectTrigger aria-label="筛选分组"><SelectValue placeholder="筛选分组" /></SelectTrigger><SelectContent><SelectItem value="all">全部分组</SelectItem>{groups.map((group) => <SelectItem key={group.id} value={String(group.id)}>{group.name}</SelectItem>)}</SelectContent></Select>
   </div>;
 }
 

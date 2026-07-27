@@ -6,7 +6,7 @@ export type AccountStatusFilter = typeof ACCOUNT_STATUS_FILTERS[number];
 export interface AccountFilters {
   status: AccountStatusFilter;
   platform: string | null;
-  group: string | null;
+  groupId: number | null;
   search: string | null;
 }
 
@@ -31,10 +31,15 @@ export function parseAccountFilters(params: URLSearchParams): AccountFilters {
   if (!ACCOUNT_STATUS_FILTERS.includes(status as AccountStatusFilter)) {
     throw new AccountQueryValidationError('invalid account status');
   }
+  const rawGroupId = params.get('groupId');
+  const groupId = rawGroupId === null ? null : Number(rawGroupId);
+  if (rawGroupId !== null && (!/^[1-9]\d*$/.test(rawGroupId) || !Number.isSafeInteger(groupId))) {
+    throw new AccountQueryValidationError('invalid account group');
+  }
   return {
     status: status as AccountStatusFilter,
     platform: optionalValue(params, 'platform'),
-    group: optionalValue(params, 'group'),
+    groupId,
     search: optionalValue(params, 'search'),
   };
 }
@@ -48,9 +53,18 @@ function groupText(value: unknown): string {
   }).join(' ');
 }
 
+function hasGroupId(value: unknown, groupId: number): boolean {
+  if (!Array.isArray(value)) return false;
+  return value.some((entry) => {
+    if (!entry || typeof entry !== 'object') return false;
+    const id = (entry as Record<string, unknown>).id;
+    return (typeof id === 'number' && Number.isSafeInteger(id) && id === groupId)
+      || (typeof id === 'string' && String(groupId) === id);
+  });
+}
+
 export function filterAccounts<T extends FilterableAccount>(accounts: T[], filters: AccountFilters): T[] {
   const platform = filters.platform?.toLocaleLowerCase();
-  const group = filters.group?.toLocaleLowerCase();
   const search = filters.search?.toLocaleLowerCase();
   return accounts.filter((account) => {
     const statusMatches = filters.status === 'all'
@@ -59,7 +73,7 @@ export function filterAccounts<T extends FilterableAccount>(accounts: T[], filte
     if (!statusMatches) return false;
     const groups = groupText(account.groupProjection).toLocaleLowerCase();
     if (platform && account.platform?.toLocaleLowerCase() !== platform) return false;
-    if (group && !groups.includes(group)) return false;
+    if (filters.groupId !== null && !hasGroupId(account.groupProjection, filters.groupId)) return false;
     if (search && !`${account.name} ${account.platform ?? ''} ${groups}`.toLocaleLowerCase().includes(search)) return false;
     return true;
   });

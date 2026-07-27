@@ -36,6 +36,8 @@ export const ACCOUNT_PROJECTION_SQL = `
       COALESCE(jsonb_agg(jsonb_build_object('id', g.id, 'name', g.name) ORDER BY g.name), '[]'::jsonb) AS group_projection
     FROM account_groups ag
     JOIN groups g ON g.id = ag.group_id
+      AND g.status = 'active'
+      AND g.deleted_at IS NULL
     WHERE ag.account_id = a.id
   ) groups ON true
   WHERE a.deleted_at IS NULL
@@ -78,7 +80,7 @@ export const CAPABILITY_PROJECTION_SQL = `
   SELECT
     COUNT(*) FILTER (WHERE table_name = 'accounts') = 14 AS accounts,
     COUNT(*) FILTER (WHERE table_name = 'account_groups') = 2 AS account_groups,
-    COUNT(*) FILTER (WHERE table_name = 'groups') = 2 AS groups,
+    COUNT(*) FILTER (WHERE table_name = 'groups') = 4 AS groups,
     COUNT(*) FILTER (WHERE table_name = 'usage_logs') = 13 AS usage_logs,
     COUNT(*) FILTER (WHERE table_name = 'ops_error_logs') = 8 AS ops_error_logs
   FROM information_schema.columns
@@ -86,7 +88,7 @@ export const CAPABILITY_PROJECTION_SQL = `
     AND (
       (table_name = 'accounts' AND column_name = ANY(ARRAY['id','name','platform','type','status','schedulable','rate_limited_at','rate_limit_reset_at','overload_until','temp_unschedulable_until','temp_unschedulable_reason','extra','updated_at','deleted_at'])) OR
       (table_name = 'account_groups' AND column_name = ANY(ARRAY['account_id','group_id'])) OR
-      (table_name = 'groups' AND column_name = ANY(ARRAY['id','name'])) OR
+      (table_name = 'groups' AND column_name = ANY(ARRAY['id','name','status','deleted_at'])) OR
       (table_name = 'usage_logs' AND column_name = ANY(ARRAY['id','account_id','request_id','created_at','duration_ms','first_token_ms','input_tokens','cache_read_tokens','cache_creation_tokens','actual_cost','account_stats_cost','total_cost','account_rate_multiplier'])) OR
       (table_name = 'ops_error_logs' AND column_name = ANY(ARRAY['id','account_id','request_id','client_request_id','created_at','error_phase','error_owner','status_code']))
     )

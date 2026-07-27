@@ -23,6 +23,8 @@ test('readonly adapter selects only approved projections and never credential or
   assert.match(ACCOUNT_PROJECTION_SQL, /rate_limit_reset_at/);
   assert.match(ACCOUNT_PROJECTION_SQL, /temp_unschedulable_reason/);
   assert.match(ACCOUNT_PROJECTION_SQL, /group_ids/);
+  assert.match(ACCOUNT_PROJECTION_SQL, /g\.status = 'active'/);
+  assert.match(ACCOUNT_PROJECTION_SQL, /g\.deleted_at IS NULL/);
   assert.match(ACCOUNT_PROJECTION_SQL, /upstream_billing_probe,received_at/);
   assert.match(ACCOUNT_PROJECTION_SQL, /upstream_billing_probe,fresh_until/);
   assert.match(ACCOUNT_PROJECTION_SQL, /peak_rate_enabled/);
@@ -33,7 +35,7 @@ test('readonly adapter selects only approved projections and never credential or
   assert.match(CAPABILITY_PROJECTION_SQL, /account_groups/);
   assert.match(CAPABILITY_PROJECTION_SQL, /table_name = 'groups'/);
   assert.match(CAPABILITY_PROJECTION_SQL, /column_name = ANY\(ARRAY\['account_id','group_id'\]\)/);
-  assert.match(CAPABILITY_PROJECTION_SQL, /column_name = ANY\(ARRAY\['id','name'\]\)/);
+  assert.match(CAPABILITY_PROJECTION_SQL, /column_name = ANY\(ARRAY\['id','name','status','deleted_at'\]\)/);
   assert.doesNotMatch(sql, /credentials|api_key|request_body|error_body|prompt/i);
 });
 

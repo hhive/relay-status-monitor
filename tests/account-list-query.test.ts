@@ -18,13 +18,13 @@ test('list query parser applies safe defaults and rejects invalid paging or sort
   const defaults = parseAccountListQuery(new URLSearchParams());
   assert.deepEqual(defaults, {
     windowKey: 'last1h',
-    filters: { status: 'schedulable', platform: null, group: null, search: null },
+    filters: { status: 'schedulable', platform: null, groupId: null, search: null },
     page: 1,
     pageSize: 50,
     sort: { key: 'alertEnabled', order: 'desc' },
   });
 
-  for (const query of ['page=0', 'page=-1', 'page=1.2', 'pageSize=10', 'sortKey=name;DROP TABLE x', 'sortOrder=sideways']) {
+  for (const query of ['page=0', 'page=-1', 'page=1.2', 'pageSize=10', 'groupId=0', 'groupId=1.2', 'groupId=7x', 'sortKey=name;DROP TABLE x', 'sortOrder=sideways']) {
     assert.throws(() => parseAccountListQuery(new URLSearchParams(query)), /invalid/i, query);
   }
   assert.throws(() => buildAccountListPageQuery({ ...defaults, sort: { key: 'injected' as never, order: 'asc' } }, 1, 0), /invalid/i);
@@ -64,8 +64,8 @@ test('sync sorting uses one request time and the same account and metric freshne
   ]);
 });
 
-test('list SQL uses bound literal filters, ordered JSON groups, snapshot-aware sorting, and a left join', () => {
-  const input = parseAccountListQuery(new URLSearchParams('status=all&platform=openai&group=Pre%25mium&search=a_b'));
+test('list SQL uses exact group IDs, ordered JSON groups, snapshot-aware sorting, and a left join', () => {
+  const input = parseAccountListQuery(new URLSearchParams('status=all&platform=openai&groupId=7&search=a_b'));
   const query = buildAccountListPageQuery(input, 7, 0);
   const text = sqlText(query);
   assert.match(text, /jsonb_array_elements/);
@@ -76,15 +76,16 @@ test('list SQL uses bound literal filters, ordered JSON groups, snapshot-aware s
   assert.match(text, /分组 #/);
   assert.match(text, /string_agg\([^\n]*, '、' ORDER BY/i);
   assert.match(text, /COALESCE\(groups\.group_sort_text, '无分组'\)/);
-  assert.match(text, /strpos\(lower\([^)]*\), lower\(\?\)\) > 0/);
+  assert.match(text, /item\.value->>'id'/);
+  assert.match(text, /EXISTS/);
   assert.match(text, /LEFT JOIN "AccountMetricSnapshot" s/);
   assert.match(text, /s\."id"/);
   assert.doesNotMatch(text, /COALESCE\(s\."availability", 0\)/);
-  assert.ok(query.values?.includes('Pre%mium'));
+  assert.ok(query.values?.includes('7'));
   assert.ok(query.values?.includes('a_b'));
 });
 
-test('account list runs batch, facets, count, and page in one repeatable-read transaction', async () => {
+test('account list runs batch, platform and group facets, count, and page in one repeatable-read transaction', async () => {
   const order: string[] = [];
   const queries: string[] = [];
   let isolationLevel: string | undefined;
@@ -108,8 +109,12 @@ test('account list runs batch, facets, count, and page in one repeatable-read tr
     $queryRaw: async (query: { strings?: readonly string[] }) => {
       const text = sqlText(query);
       queries.push(text);
-      if (queries.length === 1) { order.push('facets'); return [{ platform: 'anthropic' }, { platform: 'openai' }]; }
-      if (queries.length === 2) { order.push('count'); return [{ total: BigInt(101) }]; }
+      if (queries.length === 1) { order.push('platform-facets'); return [{ platform: 'anthropic' }, { platform: 'openai' }]; }
+      if (queries.length === 2) { order.push('group-facets'); return [
+        { id: '7', name: 'Premium' }, { id: '8', name: 'Fallback' },
+        { id: '10', name: 'Same' }, { id: '2', name: 'Same' },
+      ]; }
+      if (queries.length === 3) { order.push('count'); return [{ total: BigInt(101) }]; }
       order.push('page');
       return [{
         id: 9, name: 'New account', platform: 'openai', type: null, remoteStatus: null,
@@ -127,13 +132,22 @@ test('account list runs batch, facets, count, and page in one repeatable-read tr
 
   const result = await getAccountList(parseAccountListQuery(new URLSearchParams('page=99&pageSize=50&platform=openai')), client as never);
   assert.equal(isolationLevel, 'RepeatableRead');
-  assert.deepEqual(order, ['batch', 'facets', 'count', 'page']);
+  assert.deepEqual(order, ['batch', 'platform-facets', 'group-facets', 'count', 'page']);
   assert.deepEqual(result.facets.platforms, ['anthropic', 'openai']);
+  assert.deepEqual(result.facets.groups, [
+    { id: 8, name: 'Fallback' }, { id: 7, name: 'Premium' },
+    { id: 2, name: 'Same' }, { id: 10, name: 'Same' },
+  ]);
   assert.deepEqual(result.pagination, { page: 3, pageSize: 50, totalItems: 101, totalPages: 3 });
   assert.match(queries[0], /group_filter_text/);
   assert.doesNotMatch(queries[0], /a\."platform" =/i, 'facet SQL must ignore the selected platform');
-  assert.match(queries[1], /lower\(a\."platform"\) = lower\(\?\)/i);
-  assert.match(queries[2], /LEFT JOIN "AccountMetricSnapshot" s/);
+  assert.match(queries[0], /a\."syncState" = 'ACTIVE'/, 'platform facets must exclude retired accounts');
+  assert.doesNotMatch(queries[0], /a\."schedulable"|strpos\(/i, 'platform facets must ignore current status and search filters');
+  assert.match(queries[1], /jsonb_array_elements/);
+  assert.match(queries[1], /a\."syncState" = 'ACTIVE'/, 'group facets must exclude stale projections on retired accounts');
+  assert.doesNotMatch(queries[1], /a\."platform" =/i, 'group facets must ignore selected filters');
+  assert.match(queries[2], /lower\(a\."platform"\) = lower\(\?\)/i);
+  assert.match(queries[3], /LEFT JOIN "AccountMetricSnapshot" s/);
   assert.equal(result.accounts[0].metrics.eligibleCount, 0);
   assert.equal(result.accounts[0].metrics.userBilledUsd, '0.000000');
   assert.equal(result.accounts[0].metrics.accountBilledUsd, '0.000000');
@@ -153,7 +167,7 @@ test('empty result converges to page one without inventing pages', async () => {
       windowEnd: new Date('2026-07-26T12:00:00Z'), lastCompleteMinute: null,
       computedAt: new Date('2026-07-26T12:00:05Z'), active: true,
     }) },
-    $queryRaw: async () => (++queryNumber === 1 ? [] : queryNumber === 2 ? [{ total: BigInt(0) }] : []),
+    $queryRaw: async () => (++queryNumber <= 2 ? [] : queryNumber === 3 ? [{ total: BigInt(0) }] : []),
   };
   const client = { $transaction: async (work: (value: typeof tx) => Promise<unknown>) => work(tx) };
   const result = await getAccountList(parseAccountListQuery(new URLSearchParams('page=8')), client as never);
@@ -267,17 +281,17 @@ test('PostgreSQL executes every account sort and preserves list semantics', {
 
     const filtered = await getAccountList(
       parseAccountListQuery(new URLSearchParams(
-        'status=all&pageSize=20&platform=OpenAI&sortKey=userBilledUsd&sortOrder=desc',
+        'status=all&pageSize=20&platform=OpenAI&groupId=2&sortKey=userBilledUsd&sortOrder=desc',
       )),
       client as never,
       now,
     );
     assert.deepEqual(filtered.facets.platforms, ['Anthropic', 'Google', 'OpenAI']);
-    assert.equal(filtered.pagination.totalItems, 2);
-    assert.deepEqual(filtered.accounts.map((account) => account.metrics.userBilledUsd), [
-      '9007199254.740992',
-      '9007199254.740991',
+    assert.deepEqual(filtered.facets.groups, [
+      { id: 2, name: 'Alpha group' }, { id: 3, name: 'Beta group' },
     ]);
+    assert.equal(filtered.pagination.totalItems, 1);
+    assert.deepEqual(filtered.accounts.map((account) => account.id), [101]);
   } finally {
     await client.$disconnect();
   }

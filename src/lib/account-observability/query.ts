@@ -60,7 +60,7 @@ interface AccountQueryClient {
   accountAlertEvent?: { count(args: Record<string, unknown>): Promise<number> };
 }
 
-const DEFAULT_FILTERS: AccountFilters = { status: 'schedulable', platform: null, group: null, search: null };
+const DEFAULT_FILTERS: AccountFilters = { status: 'schedulable', platform: null, groupId: null, search: null };
 
 function billingProbe(account: AccountRow) {
   const resolved = account.probeResolvedRateMultiplier?.toString() ?? null;
@@ -244,7 +244,7 @@ export async function getAccountDetail(
   });
   const overview = buildAccountOverview({
     accounts: [account], minutes, window,
-    filters: { status: 'all', platform: null, group: null, search: null },
+    filters: { status: 'all', platform: null, groupId: null, search: null },
     latestMetricRun, openAlertCount: 0,
   });
   return {
