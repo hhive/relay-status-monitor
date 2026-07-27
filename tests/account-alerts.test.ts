@@ -44,7 +44,7 @@ function harness(input: {
 }) {
   const created: Array<Record<string, unknown>> = [];
   const resolved: Array<{ id: number; at: Date }> = [];
-  const notified: Array<{ recovery: boolean; metric: string }> = [];
+  const notified: Array<{ recovery: boolean; metric: string; metricValue: number | null; message: string }> = [];
   const normalCountUpdates: Array<{ id: number; count: number }> = [];
   const normalizeEvent = (event: TestAlertEventRecord): AccountAlertEventRecord => ({
     ...event,
@@ -78,7 +78,7 @@ function harness(input: {
     },
     resolveEvent: async (id, at) => { resolved.push({ id, at }); openEvents.splice(0, openEvents.length, ...openEvents.filter((event) => event.id !== id)); },
     notify: async (event, _account, recovery, deliveredChannelIds, onDelivered) => {
-      notified.push({ recovery, metric: event.metric });
+      notified.push({ recovery, metric: event.metric, metricValue: event.metricValue ?? null, message: event.message });
       await input.notify?.(event, recovery, deliveredChannelIds, onDelivered);
     },
   };
@@ -125,8 +125,10 @@ test('active alert is suppressed and a recently recovered alert remains in coold
   assert.equal(cooling.created.length, 0);
 });
 
-test('cleared condition requires two consecutive normal evaluations before recovery', async () => {
-  const run = harness({ rules: [rule()], minutes: [minute({ successCount: 10, upstreamErrorCount: 0 })], openEvents: [{ id: 7, accountId: 9, ruleId: 1, metric: 'availability_low', metricValue: 0.2, message: 'low' }] });
+test('cleared condition requires three consecutive normal evaluations and reports the latest value', async () => {
+  const minutes = [minute({ successCount: 10, upstreamErrorCount: 0 })];
+  const run = harness({ rules: [rule()], minutes, openEvents: [{ id: 7, accountId: 9, ruleId: 1, metric: 'availability_low', metricValue: 0.2, message: 'low' }] });
+  const storedEvent = run.openEvents[0];
   await run.evaluate(new Date('2026-07-25T12:00:00Z'));
   assert.deepEqual(run.normalCountUpdates, [{ id: 7, count: 1 }]);
   assert.equal(run.resolved.length, 0);
@@ -134,8 +136,21 @@ test('cleared condition requires two consecutive normal evaluations before recov
 
   await run.evaluate(new Date('2026-07-25T12:01:00Z'));
   assert.deepEqual(run.normalCountUpdates, [{ id: 7, count: 1 }, { id: 7, count: 2 }]);
+  assert.equal(run.resolved.length, 0);
+  assert.deepEqual(run.notified, []);
+
+  minutes[0].successCount = 9;
+  await run.evaluate(new Date('2026-07-25T12:02:00Z'));
+  assert.deepEqual(run.normalCountUpdates, [{ id: 7, count: 1 }, { id: 7, count: 2 }, { id: 7, count: 3 }]);
   assert.deepEqual(run.resolved.map((entry) => entry.id), [7]);
-  assert.deepEqual(run.notified, [{ recovery: true, metric: 'availability_low' }]);
+  assert.deepEqual(run.notified, [{
+    recovery: true,
+    metric: 'availability_low',
+    metricValue: 0.9,
+    message: '[Account 9] 可用率 0.9 lt 0.9',
+  }]);
+  assert.equal(storedEvent.metricValue, 0.2);
+  assert.equal(storedEvent.message, 'low');
 });
 
 test('abnormal evaluation resets a pending recovery confirmation', async () => {
@@ -146,18 +161,35 @@ test('abnormal evaluation resets a pending recovery confirmation', async () => {
   minutes[0].upstreamErrorCount = 8;
   await run.evaluate(new Date('2026-07-25T12:01:00Z'));
   assert.deepEqual(run.normalCountUpdates, [{ id: 7, count: 1 }, { id: 7, count: 0 }]);
-  assert.deepEqual(run.resolved, []);
+  assert.equal(run.resolved.length, 0);
+  minutes[0].successCount = 10;
+  minutes[0].upstreamErrorCount = 0;
+  await run.evaluate(new Date('2026-07-25T12:02:00Z'));
+  await run.evaluate(new Date('2026-07-25T12:03:00Z'));
+  assert.equal(run.resolved.length, 0);
+  await run.evaluate(new Date('2026-07-25T12:04:00Z'));
+  assert.equal(run.resolved.length, 1);
+  assert.equal(run.resolved[0]?.id, 7);
 });
 
 test('unavailable evaluation resets a pending recovery confirmation', async () => {
+  const minutes = [minute({ eligibleCount: 4, successCount: 4, upstreamErrorCount: 0 })];
   const run = harness({
-    rules: [rule()], minutes: [minute({ eligibleCount: 4, successCount: 4, upstreamErrorCount: 0 })],
+    rules: [rule()], minutes,
     openEvents: [{ id: 7, accountId: 9, ruleId: 1, metric: 'availability_low', metricValue: 0.2, message: 'low', recoveryNormalCount: 1 }],
   });
   await run.evaluate(new Date('2026-07-25T12:00:00Z'));
   assert.deepEqual(run.normalCountUpdates, [{ id: 7, count: 0 }]);
-  assert.deepEqual(run.resolved, []);
+  assert.equal(run.resolved.length, 0);
   assert.deepEqual(run.notified, []);
+  minutes[0].eligibleCount = 10;
+  minutes[0].successCount = 10;
+  await run.evaluate(new Date('2026-07-25T12:01:00Z'));
+  await run.evaluate(new Date('2026-07-25T12:02:00Z'));
+  assert.equal(run.resolved.length, 0);
+  await run.evaluate(new Date('2026-07-25T12:03:00Z'));
+  assert.equal(run.resolved.length, 1);
+  assert.equal(run.resolved[0]?.id, 7);
 });
 
 test('status alerts do not require traffic samples', async () => {
@@ -253,12 +285,14 @@ test('partial recovery delivery retries only the failed channel before resolving
   await run.evaluate(new Date('2026-07-25T12:00:00Z'));
   assert.deepEqual(run.normalCountUpdates, [{ id: 7, count: 1 }]);
   assert.equal(attempts, 0);
-  await assert.rejects(run.evaluate(new Date('2026-07-25T12:01:00Z')), /channel 2 recovery failed/);
+  await run.evaluate(new Date('2026-07-25T12:01:00Z'));
+  assert.equal(attempts, 0);
+  await assert.rejects(run.evaluate(new Date('2026-07-25T12:02:00Z')), /channel 2 recovery failed/);
   assert.equal(run.resolved.length, 0);
-  await run.evaluate(new Date('2026-07-25T12:02:00Z'));
+  await run.evaluate(new Date('2026-07-25T12:03:00Z'));
   assert.equal(attempts, 2);
   assert.deepEqual(deliveredInputs, [[], [1]]);
-  assert.deepEqual(run.normalCountUpdates, [{ id: 7, count: 1 }, { id: 7, count: 2 }]);
+  assert.deepEqual(run.normalCountUpdates, [{ id: 7, count: 1 }, { id: 7, count: 2 }, { id: 7, count: 3 }]);
   assert.deepEqual(run.resolved.map((entry) => entry.id), [7]);
 });
 
@@ -290,6 +324,8 @@ test('cleared condition finishes a partial trigger delivery before recovery', as
   await run.evaluate(new Date('2026-07-25T12:01:00Z'));
   assert.deepEqual(calls, [{ recovery: false, delivered: [] }]);
   await run.evaluate(new Date('2026-07-25T12:02:00Z'));
+  assert.deepEqual(calls, [{ recovery: false, delivered: [] }]);
+  await run.evaluate(new Date('2026-07-25T12:03:00Z'));
   assert.deepEqual(calls, [
     { recovery: false, delivered: [] },
     { recovery: false, delivered: [1] },

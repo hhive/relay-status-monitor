@@ -135,7 +135,7 @@ async function notifyEvent(
 }
 
 function boundedRecoveryNormalCount(value: number): number {
-  return Number.isSafeInteger(value) ? Math.max(0, Math.min(2, value)) : 0;
+  return Number.isSafeInteger(value) ? Math.max(0, Math.min(3, value)) : 0;
 }
 
 async function setRecoveryNormalCount(
@@ -185,6 +185,10 @@ function metricLabel(metric: AccountAlertMetric): string {
     upstream_rate_multiplier: '上游倍率', unschedulable: '不可调度', sync_stale: '同步陈旧分钟数',
   };
   return labels[metric];
+}
+
+function alertMessage(accountName: string, rule: AccountAlertRuleRecord, value: number | null): string {
+  return `[${accountName}] ${metricLabel(rule.metric)} ${value ?? '-'} ${rule.operator} ${rule.threshold}`;
 }
 
 function evaluateRule(
@@ -267,13 +271,17 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
           continue;
         }
         if (!result.triggered && open) {
-          const normalCount = Math.min(2, boundedRecoveryNormalCount(open.recoveryNormalCount) + 1);
+          const normalCount = Math.min(3, boundedRecoveryNormalCount(open.recoveryNormalCount) + 1);
           await setRecoveryNormalCount(dependencies, open, normalCount);
-          if (normalCount < 2) continue;
+          if (normalCount < 3) continue;
           if (open.notificationDeliveries != null) {
             await notifyEvent(dependencies, open, account, false);
           }
-          await notifyEvent(dependencies, open, account, true);
+          await notifyEvent(dependencies, {
+            ...open,
+            metricValue: result.value,
+            message: alertMessage(account.name, rule, result.value),
+          }, account, true);
           await dependencies.resolveEvent(open.id, now);
           continue;
         }
@@ -290,7 +298,7 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
         const event = await dependencies.createEvent({
           accountId: account.id, ruleId: rule.id, metric: rule.metric,
           severity: rule.severity ?? 'WARNING', metricValue: result.value,
-          message: `[${account.name}] ${metricLabel(rule.metric)} ${result.value ?? '-'} ${rule.operator} ${rule.threshold}`,
+          message: alertMessage(account.name, rule, result.value),
           notificationDeliveries: { trigger: [], recovery: [] },
           recoveryNormalCount: 0,
           createdAt: now,
