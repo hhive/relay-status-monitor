@@ -31,6 +31,7 @@ type TestAlertEventRecord = Omit<AccountAlertEventRecord, 'recoveryNormalCount'>
 function harness(input: {
   rules: AccountAlertRuleRecord[];
   account?: Partial<AccountAlertAccountRecord>;
+  disabledGroupIds?: ReadonlySet<number>;
   minutes?: AccountMetricMinuteRecord[];
   openEvents?: TestAlertEventRecord[];
   recentEvents?: TestAlertEventRecord[];
@@ -62,6 +63,7 @@ function harness(input: {
   const dependencies: AccountAlertDependencies = {
     loadRules: async () => input.rules,
     loadAccounts: async () => [{ ...account, ...(input.account ?? {}) }],
+    loadDisabledGroupIds: async () => input.disabledGroupIds ?? new Set(),
     loadLatestMetricBucket: async () => input.latestMetricBucketStart
       ?? account.metricMinutes.reduce<Date | null>((latest, item) => latest == null || item.bucketStart > latest ? item.bucketStart : latest, null),
     findOpenEvent: async (accountId, ruleId) => openEvents.find((event) => event.accountId === accountId && event.ruleId === ruleId) ?? null,
@@ -368,6 +370,58 @@ test('account alert master switch off leaves existing open events untouched', as
     openEvents: [{ id: 7, accountId: 9, ruleId: 1, metric: 'availability_low', metricValue: 0.2, message: 'low' }],
   });
   await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.deepEqual(run.resolved, []);
+  assert.deepEqual(run.notified, []);
+});
+
+test('exclusive membership in a disabled group suppresses every rule including multiplier', async () => {
+  const snapshot = {
+    groupProjection: [{ id: 7, name: 'Disabled' }],
+    probeStatus: 'ok', probeBillingScope: 'token', probeResolvedRateMultiplier: '2',
+    probePeakRateEnabled: false, probeLastSuccessAt: new Date('2026-07-25T11:59:00Z'),
+    probeFreshAt: new Date('2026-07-25T13:00:00Z'),
+  };
+  const run = harness({
+    rules: [
+      rule({ minRequests: 1 }),
+      rule({ id: 2, accountId: 9, metric: 'upstream_rate_multiplier', operator: 'gt', threshold: 1.5, minRequests: 0 }),
+    ],
+    minutes: [minute({ successCount: 2, upstreamErrorCount: 8 })],
+    account: snapshot,
+    disabledGroupIds: new Set([7]),
+  });
+
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+
+  assert.deepEqual(run.created, []);
+  assert.deepEqual(run.notified, []);
+});
+
+test('multi-group and ungrouped accounts remain eligible when one group is disabled', async () => {
+  for (const groupProjection of [[{ id: 7 }, { id: 8 }], []]) {
+    const run = harness({
+      rules: [rule({ minRequests: 1 })],
+      minutes: [minute({ successCount: 2, upstreamErrorCount: 8 })],
+      account: { groupProjection },
+      disabledGroupIds: new Set([7]),
+    });
+    await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+    assert.deepEqual(run.created.map((event) => event.metric), ['availability_low']);
+  }
+});
+
+test('group suppression leaves an existing open event untouched', async () => {
+  const run = harness({
+    rules: [rule()],
+    minutes: [minute({ successCount: 10, upstreamErrorCount: 0 })],
+    account: { groupProjection: [{ id: 7 }] },
+    disabledGroupIds: new Set([7]),
+    openEvents: [{ id: 7, accountId: 9, ruleId: 1, metric: 'availability_low', metricValue: 0.2, message: 'low' }],
+  });
+
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+
+  assert.deepEqual(run.normalCountUpdates, []);
   assert.deepEqual(run.resolved, []);
   assert.deepEqual(run.notified, []);
 });

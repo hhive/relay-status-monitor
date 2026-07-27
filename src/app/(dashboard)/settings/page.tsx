@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   BellRing,
+  Layers3,
   MessageSquare,
   SlidersHorizontal,
   KeyRound,
@@ -70,6 +71,14 @@ interface AlertChannel {
   enabled: boolean;
 }
 
+interface GroupAlertSetting {
+  groupId: number;
+  name: string;
+  alertEnabled: boolean;
+  exclusiveAccountCount: number;
+  boundAccountCount: number;
+}
+
 type NumericRuleField = 'threshold' | 'minRequests' | 'minPromptTokens' | 'cooldownMin';
 type RuleDraft = Record<NumericRuleField, string>;
 type RuleDrafts = Record<number, RuleDraft>;
@@ -94,10 +103,14 @@ export default function SettingsPage() {
       <PageHeader icon={Settings} title="设置" />
 
       <Tabs defaultValue="rules" className="w-full">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-5">
           <TabsTrigger value="rules">
             <BellRing />
             告警规则
+          </TabsTrigger>
+          <TabsTrigger value="group-alerts">
+            <Layers3 />
+            分组告警
           </TabsTrigger>
           <TabsTrigger value="channels">
             <MessageSquare />
@@ -115,6 +128,9 @@ export default function SettingsPage() {
 
         <TabsContent value="rules" className="mt-4">
           <RulesTab />
+        </TabsContent>
+        <TabsContent value="group-alerts" className="mt-4">
+          <GroupAlertsTab />
         </TabsContent>
         <TabsContent value="channels" className="mt-4">
           <ChannelsTab />
@@ -402,6 +418,96 @@ function RuleNumberInput({ rule, field, drafts, updatingId, onChange, onCommit, 
         }
       }}
     />
+  );
+}
+
+// ============ 分组告警 ============
+function GroupAlertsTab() {
+  const [groups, setGroups] = useState<GroupAlertSetting[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pendingGroupIds, setPendingGroupIds] = useState<Set<number>>(() => new Set());
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/group-alert-settings')
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : '分组告警加载失败');
+        if (active) setGroups(Array.isArray(data.groups) ? data.groups : []);
+      })
+      .catch((error) => {
+        if (active) setLoadError(error instanceof Error ? error.message : '分组告警加载失败');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  async function toggleGroup(group: GroupAlertSetting, enabled: boolean) {
+    if (pendingGroupIds.has(group.groupId)) return;
+    setPendingGroupIds((current) => new Set(current).add(group.groupId));
+    setGroups((current) => current.map((item) =>
+      item.groupId === group.groupId ? { ...item, alertEnabled: enabled } : item));
+    try {
+      const response = await apiFetch(`/api/group-alert-settings/${group.groupId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : '分组告警保存失败');
+      setGroups((current) => current.map((item) => item.groupId === group.groupId ? data : item));
+    } catch (error) {
+      setGroups((current) => current.map((item) =>
+        item.groupId === group.groupId ? { ...item, alertEnabled: group.alertEnabled } : item));
+      toast.error(error instanceof Error ? error.message : '分组告警保存失败');
+    } finally {
+      setPendingGroupIds((current) => {
+        const next = new Set(current);
+        next.delete(group.groupId);
+        return next;
+      });
+    }
+  }
+
+  if (loading) {
+    return <Card className="flex h-32 items-center justify-center text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />加载中…</Card>;
+  }
+  if (loadError) {
+    return <Card className="flex h-32 items-center justify-center text-destructive">{loadError}</Card>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        关闭后，仅唯一属于该分组的账号停止告警；同时属于多个分组的账号不受影响。
+      </p>
+      {groups.length === 0 ? (
+        <Card className="flex h-32 items-center justify-center text-muted-foreground">暂无已绑定分组</Card>
+      ) : groups.map((group) => (
+        <Card key={group.groupId} className={cn(pendingGroupIds.has(group.groupId) && 'opacity-70')}>
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-medium" title={group.name}>{group.name}</span>
+                <Badge variant="secondary" className="shrink-0">#{group.groupId}</Badge>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                实际影响 {group.exclusiveAccountCount} 个账号 · 共绑定 {group.boundAccountCount} 个账号
+              </p>
+            </div>
+            <Switch
+              checked={group.alertEnabled}
+              disabled={pendingGroupIds.has(group.groupId)}
+              onCheckedChange={(enabled) => void toggleGroup(group, enabled)}
+              aria-label={`分组 ${group.name} 告警开关`}
+            />
+          </CardContent>
+        </Card>
+      ))}
+    </div>
   );
 }
 

@@ -3,6 +3,7 @@ import type { Prisma, Severity } from '@prisma/client';
 import { sendAccountNotification } from '../alerts/channels/feishu';
 import { effectiveBillingRate, histogramP95, mergeLatencyHistogram, minuteBucket } from './metrics';
 import { normalizeGlobalAccountAlertMetric } from './alert-management';
+import { shouldSuppressAccountAlerts } from './group-alert-settings';
 
 export type AccountAlertMetric =
   | 'availability_low'
@@ -48,6 +49,7 @@ export interface AccountAlertAccountRecord {
   schedulable: boolean | null;
   /** 账号告警总开关；为 false 时该账号的所有规则都不评估、不推送。缺省视为开启。 */
   alertEnabled?: boolean;
+  groupProjection?: unknown;
   syncState: string;
   lastSyncedAt: Date | null;
   probeFreshAt: Date | null;
@@ -85,6 +87,7 @@ interface NewAccountAlertEvent extends Omit<AccountAlertEventRecord, 'id' | 'not
 export interface AccountAlertDependencies {
   loadRules: () => Promise<AccountAlertRuleRecord[]>;
   loadAccounts: (window: { start: Date; end: Date }) => Promise<AccountAlertAccountRecord[]>;
+  loadDisabledGroupIds: () => Promise<ReadonlySet<number>>;
   loadLatestMetricBucket: (accountId: number) => Promise<Date | null>;
   findOpenEvent: (accountId: number, ruleId: number) => Promise<AccountAlertEventRecord | null>;
   findRecentEvent: (accountId: number, ruleId: number, since: Date) => Promise<AccountAlertEventRecord | null>;
@@ -247,7 +250,11 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
   return async (now = new Date()): Promise<void> => {
     const end = minuteBucket(now);
     const start = new Date(end.getTime() - ALERT_WINDOW_MINUTES * 60_000);
-    const [storedRules, accounts] = await Promise.all([dependencies.loadRules(), dependencies.loadAccounts({ start, end })]);
+    const [storedRules, accounts, disabledGroupIds] = await Promise.all([
+      dependencies.loadRules(),
+      dependencies.loadAccounts({ start, end }),
+      dependencies.loadDisabledGroupIds(),
+    ]);
     const rules = storedRules.flatMap((rule) => {
       const metric = rule.metric === 'upstream_rate_multiplier'
         ? rule.metric
@@ -256,6 +263,7 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
     });
     for (const account of accounts) {
       if (account.alertEnabled === false) continue;
+      if (shouldSuppressAccountAlerts(account.groupProjection, disabledGroupIds)) continue;
       const needsLatestMetricBucket = rules.some((rule) =>
         rule.enabled && rule.metric === 'sync_stale' && (rule.accountId == null || rule.accountId === account.id));
       const latestMetricBucketStart = needsLatestMetricBucket
@@ -316,6 +324,10 @@ export async function evaluateAccountAlerts(now = new Date()): Promise<void> {
       where: { syncState: 'ACTIVE', alertEnabled: true },
       include: { metricMinutes: { where: { bucketStart: { gte: start, lt: end } } } },
     })) as AccountAlertAccountRecord[],
+    loadDisabledGroupIds: async () => new Set((await prisma.groupAlertSetting.findMany({
+      where: { alertEnabled: false },
+      select: { groupId: true },
+    })).map((setting) => setting.groupId)),
     loadLatestMetricBucket: async (accountId) => {
       const latest = await prisma.accountMetricMinute.findFirst({
         where: { accountId },
