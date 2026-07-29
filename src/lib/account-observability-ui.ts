@@ -72,6 +72,8 @@ export interface AccountSummaryDto {
   upstream: {
     balanceUsd: string | null;
     rateMultiplier: string | null;
+    apiRateMultiplier: string | null;
+    estimatedRateMultiplier: string | null;
     upstreamRateSource: string | null;
     collectedAt: string | null;
   };
@@ -95,6 +97,8 @@ export interface AccountListItemDto {
     'cacheHitRate' | 'userBilledUsd' | 'accountBilledUsd'> & {
       balanceUsd: string | null;
       upstreamRateMultiplier: string | null;
+      upstreamApiRateMultiplier: string | null;
+      upstreamEstimatedRateMultiplier: string | null;
       upstreamRateSource: string | null;
     };
 }

@@ -1078,12 +1078,13 @@ function metricLabel(metric: string): string {
     unschedulable: '不可调度状态',
     sync_stale: '同步陈旧分钟数',
     balance_low: '上游余额',
+    upstream_rate_deviation: '上游倍率偏差率（0.10 = 10%）',
   };
   return map[metric] || metric;
 }
 
 function ruleUsesTrafficSamples(metric: string): boolean {
-  return !['unschedulable', 'sync_stale', 'balance_low'].includes(metric);
+  return !['unschedulable', 'sync_stale', 'balance_low', 'upstream_rate_deviation'].includes(metric);
 }
 
 function ruleOperators(metric: string): string[] {

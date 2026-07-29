@@ -17,6 +17,7 @@ const defaultAccountRules = [
   { name: '账号持续不可调度', metric: 'unschedulable', operator: 'eq', threshold: 1, minRequests: 0, cooldownMin: 30 },
   { name: '账号同步陈旧', metric: 'sync_stale', operator: 'gt', threshold: 10, minRequests: 0, cooldownMin: 30 },
   { name: '上游余额低', metric: 'balance_low', operator: 'lte', threshold: 5, minRequests: 0, cooldownMin: 0 },
+  { name: '上游倍率偏差高', metric: 'upstream_rate_deviation', operator: 'gt', threshold: 0.10, minRequests: 0, cooldownMin: 30 },
 ];
 
 const defaultSettings: Record<string, string> = {

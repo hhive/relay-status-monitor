@@ -40,7 +40,7 @@ export const ACCOUNT_METRIC_DEFINITIONS: Record<AccountMetricKey, AccountMetricD
   userBilledUsd: { label: '用户计费', source: 'usage_logs.actual_cost', formula: 'SUM(actual_cost)', sample: '成功计费记录', empty: '无成功计费记录时为 $0', unit: 'usd' },
   accountBilledUsd: { label: '账号计费', source: 'usage_logs billing snapshots', formula: 'SUM(COALESCE(account_stats_cost,total_cost) * COALESCE(account_rate_multiplier,1))', sample: '成功计费记录', empty: '无成功计费记录时为 $0', unit: 'usd' },
   balanceUsd: { label: '上游余额', source: 'Sub2API GET /v1/usage', formula: 'latest successful minute balance', sample: '上一完整分钟', empty: '获取失败或上游不支持时暂无数据', unit: 'usd' },
-  upstreamRateMultiplier: { label: '上游倍率', source: 'Sub2API key billing or API-key usage counters', formula: 'effective_rate_multiplier; fallback: API-key used-cost delta / 1x cost delta', sample: '上一完整分钟', empty: '获取或估算失败时暂无数据', unit: 'multiplier' },
+  upstreamRateMultiplier: { label: '上游倍率', source: 'Sub2API key billing and API-key usage counters', formula: 'interface: effective_rate_multiplier; estimate: API-key used-cost delta / 1x cost delta', sample: '上一完整分钟', empty: '对应接口或估算失败时暂无数据', unit: 'multiplier' },
   successCount: { label: '成功请求', source: 'AccountMetricMinute.successCount', formula: 'SUM(successCount)', sample: '请求数', empty: '无请求时为 0', unit: 'count' },
   upstreamErrorCount: { label: '上游责任错误', source: 'AccountMetricMinute.upstreamErrorCount', formula: 'SUM(upstreamErrorCount)', sample: '请求数', empty: '无错误时为 0', unit: 'count' },
   openAlertCount: { label: '未解决告警', source: 'AccountAlertEvent', formula: 'COUNT(resolved = false)', sample: '当前筛选账号', empty: '无告警时为 0', unit: 'count' },

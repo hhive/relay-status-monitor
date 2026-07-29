@@ -28,6 +28,7 @@ interface BalanceMinuteWrite {
   upstreamKeyUsedUsd: number | null;
   upstreamKeyStandardUsd: number | null;
   upstreamRateMultiplier: number | null;
+  upstreamEstimatedRateMultiplier: number | null;
   upstreamRateSource: 'api' | 'estimated' | null;
 }
 
@@ -53,6 +54,7 @@ export async function collectBalanceMinute(now: Date, dependencies: BalanceColle
     upstreamKeyUsedUsd: null,
     upstreamKeyStandardUsd: null,
     upstreamRateMultiplier: null,
+    upstreamEstimatedRateMultiplier: null,
     upstreamRateSource: null,
   }));
   const tasks = accounts.flatMap((account, index) => {
@@ -84,15 +86,18 @@ export async function collectBalanceMinute(now: Date, dependencies: BalanceColle
   const bucketStart = new Date(minuteBucket(now).getTime() - 60_000);
   if (dependencies.estimateRate) {
     await Promise.all(rows.map(async (row) => {
-      if (row.upstreamRateMultiplier != null || row.upstreamKeyUsedUsd == null) return;
+      if (row.upstreamKeyUsedUsd == null) return;
       const estimated = await dependencies.estimateRate!(row.accountId, bucketStart, {
         balanceUsd: row.balanceUsd,
         keyUsedUsd: row.upstreamKeyUsedUsd,
         keyStandardUsd: row.upstreamKeyStandardUsd,
       }).catch(() => null);
       if (estimated != null && Number.isFinite(estimated)) {
-        row.upstreamRateMultiplier = estimated;
-        row.upstreamRateSource = 'estimated';
+        row.upstreamEstimatedRateMultiplier = estimated;
+        if (row.upstreamRateMultiplier == null) {
+          row.upstreamRateMultiplier = estimated;
+          row.upstreamRateSource = 'estimated';
+        }
       }
     }));
   }
@@ -170,8 +175,8 @@ export async function runUpstreamBalanceCollection(now: Date, readClient: Readon
         for (const row of rows) {
           await tx.accountMetricMinute.upsert({
             where: { accountId_bucketStart: { accountId: row.accountId, bucketStart } },
-            create: { accountId: row.accountId, bucketStart, balanceUsd: row.balanceUsd, upstreamKeyUsedUsd: row.upstreamKeyUsedUsd, upstreamKeyStandardUsd: row.upstreamKeyStandardUsd, upstreamRateMultiplier: row.upstreamRateMultiplier, upstreamRateSource: row.upstreamRateSource },
-            update: { balanceUsd: row.balanceUsd, upstreamKeyUsedUsd: row.upstreamKeyUsedUsd, upstreamKeyStandardUsd: row.upstreamKeyStandardUsd, upstreamRateMultiplier: row.upstreamRateMultiplier, upstreamRateSource: row.upstreamRateSource },
+            create: { accountId: row.accountId, bucketStart, balanceUsd: row.balanceUsd, upstreamKeyUsedUsd: row.upstreamKeyUsedUsd, upstreamKeyStandardUsd: row.upstreamKeyStandardUsd, upstreamRateMultiplier: row.upstreamRateMultiplier, upstreamEstimatedRateMultiplier: row.upstreamEstimatedRateMultiplier, upstreamRateSource: row.upstreamRateSource },
+            update: { balanceUsd: row.balanceUsd, upstreamKeyUsedUsd: row.upstreamKeyUsedUsd, upstreamKeyStandardUsd: row.upstreamKeyStandardUsd, upstreamRateMultiplier: row.upstreamRateMultiplier, upstreamEstimatedRateMultiplier: row.upstreamEstimatedRateMultiplier, upstreamRateSource: row.upstreamRateSource },
           });
         }
       });

@@ -31,7 +31,7 @@ type ResolvedFilter = 'open' | 'resolved' | 'all';
 
 const METRICS = [
   'availability_low', 'error_rate_high', 'duration_p95_high', 'first_token_p95_high',
-  'cache_hit_low', 'balance_low', 'unschedulable', 'sync_stale', 'upstream_rate_multiplier',
+  'cache_hit_low', 'balance_low', 'upstream_rate_deviation', 'unschedulable', 'sync_stale', 'upstream_rate_multiplier',
 ] as const;
 
 export default function IncidentsPage() {
@@ -182,6 +182,6 @@ function metricLabel(metric: string): string {
   return {
     availability_low: '可用率低', error_rate_high: '错误率高', duration_p95_high: '总延迟 P95 高',
     first_token_p95_high: '首 Token P95 高', cache_hit_low: '缓存命中率低',
-    balance_low: '上游余额低', unschedulable: '不可调度', sync_stale: '同步陈旧', upstream_rate_multiplier: '上游倍率',
+    balance_low: '上游余额低', upstream_rate_deviation: '上游倍率偏差高', unschedulable: '不可调度', sync_stale: '同步陈旧', upstream_rate_multiplier: '上游倍率',
   }[metric] ?? metric;
 }

@@ -46,6 +46,7 @@ interface MetricRow {
   accountBilledUsd: unknown;
   balanceUsd?: unknown;
   upstreamRateMultiplier?: unknown;
+  upstreamEstimatedRateMultiplier?: unknown;
   upstreamRateSource?: string | null;
   errorStatusCounts?: unknown;
   errorPhaseCounts?: unknown;
@@ -198,6 +199,12 @@ export function buildAccountOverview(input: {
         upstream: {
           balanceUsd: latest?.balanceUsd == null ? null : String(latest.balanceUsd),
           rateMultiplier: latest?.upstreamRateMultiplier == null ? null : String(latest.upstreamRateMultiplier),
+          apiRateMultiplier: latest?.upstreamRateSource === 'api' && latest.upstreamRateMultiplier != null
+            ? String(latest.upstreamRateMultiplier) : null,
+          estimatedRateMultiplier: latest?.upstreamEstimatedRateMultiplier != null
+            ? String(latest.upstreamEstimatedRateMultiplier)
+            : latest?.upstreamRateSource === 'estimated' && latest.upstreamRateMultiplier != null
+              ? String(latest.upstreamRateMultiplier) : null,
           upstreamRateSource: latest?.upstreamRateSource ?? null,
           collectedAt: latest?.bucketStart ?? null,
         },

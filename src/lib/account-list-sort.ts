@@ -181,8 +181,12 @@ function comparePrimary(left: SortableAccount, right: SortableAccount, state: Ac
     return compareNullable(left.metrics[key], right.metrics[key], compareDecimals, order);
   }
   if (key === 'upstreamRateMultiplier') {
-    const leftValue = 'upstream' in left ? left.upstream.rateMultiplier : left.metrics.upstreamRateMultiplier;
-    const rightValue = 'upstream' in right ? right.upstream.rateMultiplier : right.metrics.upstreamRateMultiplier;
+    const leftValue = 'upstream' in left
+      ? left.upstream.apiRateMultiplier ?? left.upstream.estimatedRateMultiplier
+      : left.metrics.upstreamApiRateMultiplier ?? left.metrics.upstreamEstimatedRateMultiplier ?? left.metrics.upstreamRateMultiplier;
+    const rightValue = 'upstream' in right
+      ? right.upstream.apiRateMultiplier ?? right.upstream.estimatedRateMultiplier
+      : right.metrics.upstreamApiRateMultiplier ?? right.metrics.upstreamEstimatedRateMultiplier ?? right.metrics.upstreamRateMultiplier;
     return compareNullable(leftValue, rightValue, compareDecimals, order);
   }
   return compareNullable(finiteNumber(left.metrics[key]), finiteNumber(right.metrics[key]), compareNumber, order);

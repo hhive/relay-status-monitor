@@ -12,6 +12,7 @@ export type AccountAlertMetric =
   | 'first_token_p95_high'
   | 'cache_hit_low'
   | 'balance_low'
+  | 'upstream_rate_deviation'
   | 'upstream_rate_multiplier'
   | 'unschedulable'
   | 'sync_stale';
@@ -41,6 +42,9 @@ export interface AccountMetricMinuteRecord {
   cacheReadTokens: bigint;
   cacheCreationTokens: bigint;
   balanceUsd: unknown;
+  upstreamRateMultiplier?: unknown;
+  upstreamEstimatedRateMultiplier?: unknown;
+  upstreamRateSource?: string | null;
 }
 
 interface AccountBalanceMinuteRecord {
@@ -195,13 +199,21 @@ function metricLabel(metric: AccountAlertMetric): string {
   const labels: Record<AccountAlertMetric, string> = {
     availability_low: '可用率', error_rate_high: '上游错误率', duration_p95_high: '总耗时 P95',
     first_token_p95_high: '首字耗时 P95', cache_hit_low: '缓存命中率',
-    balance_low: '上游余额', upstream_rate_multiplier: '上游倍率', unschedulable: '不可调度',
+    balance_low: '上游余额', upstream_rate_deviation: '上游倍率偏差', upstream_rate_multiplier: '上游倍率', unschedulable: '不可调度',
     sync_stale: '同步陈旧分钟数',
   };
   return labels[metric];
 }
 
-function alertMessage(accountName: string, rule: AccountAlertRuleRecord, value: number | null): string {
+function alertMessage(
+  accountName: string,
+  rule: AccountAlertRuleRecord,
+  value: number | null,
+  rates?: { api: number; estimated: number },
+): string {
+  if (rule.metric === 'upstream_rate_deviation' && value != null && rates) {
+    return `[${accountName}] 接口 ${rates.api}x · 估算 ${rates.estimated}x · 偏差 ${(value * 100).toFixed(2)}% ${rule.operator} ${(rule.threshold * 100).toFixed(2)}%`;
+  }
   return `[${accountName}] ${metricLabel(rule.metric)} ${value ?? '-'} ${rule.operator} ${rule.threshold}`;
 }
 
@@ -210,7 +222,7 @@ function evaluateRule(
   account: AccountAlertAccountRecord,
   now: Date,
   latestMetricBucketStart: Date | null,
-): { available: boolean; triggered: boolean; value: number | null; crossed?: boolean } {
+): { available: boolean; triggered: boolean; value: number | null; crossed?: boolean; rates?: { api: number; estimated: number } } {
   if (rule.metric === 'unschedulable') {
     const value = account.schedulable === false ? 1 : 0;
     return { available: account.schedulable != null, triggered: compare(value, rule.operator, rule.threshold), value };
@@ -262,6 +274,21 @@ function evaluateRule(
       value: currentValue,
       crossed: triggered && previous != null && !compare(previous.value, rule.operator, rule.threshold),
     };
+  }
+
+  if (rule.metric === 'upstream_rate_deviation') {
+    const expectedBucket = minuteBucket(now).getTime() - 60_000;
+    const latest = account.metricMinutes.find((item) => item.bucketStart.getTime() === expectedBucket);
+    if (!latest || latest.upstreamRateSource !== 'api') {
+      return { available: false, triggered: false, value: null };
+    }
+    const api = latest.upstreamRateMultiplier == null ? null : Number(latest.upstreamRateMultiplier);
+    const estimated = latest.upstreamEstimatedRateMultiplier == null ? null : Number(latest.upstreamEstimatedRateMultiplier);
+    if (api == null || estimated == null || !Number.isFinite(api) || !Number.isFinite(estimated) || api <= 0 || estimated <= 0) {
+      return { available: false, triggered: false, value: null };
+    }
+    const value = Number(Math.abs(estimated / api - 1).toFixed(12));
+    return { available: true, triggered: compare(value, rule.operator, rule.threshold), value, rates: { api, estimated } };
   }
 
   const minutes = account.metricMinutes;
@@ -331,7 +358,7 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
           await notifyEvent(dependencies, {
             ...open,
             metricValue: result.value,
-            message: alertMessage(account.name, rule, result.value),
+            message: alertMessage(account.name, rule, result.value, result.rates),
           }, account, true);
           await dependencies.resolveEvent(open.id, now);
           continue;
@@ -350,7 +377,7 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
         const event = await dependencies.createEvent({
           accountId: account.id, ruleId: rule.id, metric: rule.metric,
           severity: rule.severity ?? 'WARNING', metricValue: result.value,
-          message: alertMessage(account.name, rule, result.value),
+          message: alertMessage(account.name, rule, result.value, result.rates),
           notificationDeliveries: { trigger: [], recovery: [] },
           recoveryNormalCount: 0,
           createdAt: now,

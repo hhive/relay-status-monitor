@@ -46,6 +46,7 @@ interface AccountListRawRow {
   accountBilledUsd: unknown;
   balanceUsd: unknown;
   upstreamRateMultiplier: unknown;
+  upstreamEstimatedRateMultiplier: unknown;
   upstreamRateSource: string | null;
   lastCompleteMinute: Date | null;
 }
@@ -173,7 +174,11 @@ function fixedSortExpression(key: AccountSortKey, requestNow: Date): Prisma.Sql[
     case 'userBilledUsd': return [Prisma.sql`s."userBilledUsd"`];
     case 'accountBilledUsd': return [Prisma.sql`s."accountBilledUsd"`];
     case 'balanceUsd': return [Prisma.sql`s."balanceUsd"`];
-    case 'upstreamRateMultiplier': return [Prisma.sql`s."upstreamRateMultiplier"`];
+    case 'upstreamRateMultiplier': return [Prisma.sql`COALESCE(
+      CASE WHEN s."upstreamRateSource" = 'api' THEN s."upstreamRateMultiplier" END,
+      s."upstreamEstimatedRateMultiplier",
+      CASE WHEN s."upstreamRateSource" = 'estimated' THEN s."upstreamRateMultiplier" END
+    )`];
     case 'eligibleCount': return [Prisma.sql`s."eligibleCount"`];
     case 'sync': return [Prisma.sql`CASE
       WHEN a."lastSyncedAt" IS NULL OR s."lastCompleteMinute" IS NULL THEN NULL
@@ -258,7 +263,7 @@ export function buildAccountListPageQuery(
       a."syncState", a."groupProjection", a."lastSyncedAt", a."alertEnabled",
       s."id" AS "snapshotId", s."eligibleCount", s."availability", s."errorRate",
       s."durationP95Ms", s."firstTokenP95Ms", s."cacheHitRate", s."userBilledUsd",
-      s."accountBilledUsd", s."balanceUsd", s."upstreamRateMultiplier", s."upstreamRateSource",
+      s."accountBilledUsd", s."balanceUsd", s."upstreamRateMultiplier", s."upstreamEstimatedRateMultiplier", s."upstreamRateSource",
       s."lastCompleteMinute"
     FROM account_text a
     LEFT JOIN "AccountMetricSnapshot" s ON s."accountId" = a."id" AND s."batchId" = ${batchId}
@@ -304,6 +309,12 @@ function listItem(row: AccountListRawRow): AccountListItemDto {
       balanceUsd: hasSnapshot && row.balanceUsd != null ? decimalString(row.balanceUsd, '') : null,
       upstreamRateMultiplier: hasSnapshot && row.upstreamRateMultiplier != null
         ? decimalString(row.upstreamRateMultiplier, '') : null,
+      upstreamApiRateMultiplier: hasSnapshot && row.upstreamRateSource === 'api' && row.upstreamRateMultiplier != null
+        ? decimalString(row.upstreamRateMultiplier, '') : null,
+      upstreamEstimatedRateMultiplier: hasSnapshot && row.upstreamEstimatedRateMultiplier != null
+        ? decimalString(row.upstreamEstimatedRateMultiplier, '')
+        : hasSnapshot && row.upstreamRateSource === 'estimated' && row.upstreamRateMultiplier != null
+          ? decimalString(row.upstreamRateMultiplier, '') : null,
       upstreamRateSource: hasSnapshot ? row.upstreamRateSource : null,
     },
   };

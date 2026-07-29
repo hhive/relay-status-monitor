@@ -231,8 +231,8 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
       <h2 id="upstream-billing-heading" className="text-sm font-semibold">上游计费状态</h2>
       <dl className="grid gap-3 text-sm sm:grid-cols-3">
         <div><dt className="text-xs text-muted-foreground">上游余额</dt><dd className="mt-1 font-medium tabular-nums">{formatAccountMetric('balanceUsd', data.upstream.balanceUsd)}</dd></div>
-        <div><dt className="text-xs text-muted-foreground">上游倍率</dt><dd className="mt-1 font-medium tabular-nums">{formatAccountMetric('upstreamRateMultiplier', data.upstream.rateMultiplier)}</dd></div>
-        <div><dt className="text-xs text-muted-foreground">倍率来源</dt><dd className="mt-1 font-medium">{data.upstream.upstreamRateSource === 'api' ? '上游接口' : data.upstream.upstreamRateSource === 'estimated' ? '余额消耗估算' : '暂无数据'}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">接口倍率</dt><dd className="mt-1 font-medium tabular-nums">{formatAccountMetric('upstreamRateMultiplier', data.upstream.apiRateMultiplier)}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">估算倍率</dt><dd className="mt-1 font-medium tabular-nums">{formatAccountMetric('upstreamRateMultiplier', data.upstream.estimatedRateMultiplier)}</dd></div>
       </dl>
       <p className="text-xs text-muted-foreground">采集分钟：{formatBeijing(data.upstream.collectedAt)}</p>
     </section>

@@ -137,8 +137,12 @@ test('account detail requests each selected window and exposes five trend views 
   assert.match(detail, /数据不完整/);
   assert.match(detail, /promptTokens/);
   assert.match(detail, /上游余额/);
-  assert.match(detail, /上游倍率/);
-  assert.match(detail, /upstreamRateSource/);
+  assert.match(detail, /接口倍率/);
+  assert.match(detail, /估算倍率/);
+  const overview = source('src/components/account-observability/account-overview.tsx');
+  assert.match(overview, /接口/);
+  assert.match(overview, /估算/);
+  assert.match(overview, /text-xs/);
 });
 
 test('notification channel save reports API failures and successful creation', () => {

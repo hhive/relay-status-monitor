@@ -95,6 +95,7 @@ test('snapshot rows include accounts without minute data', () => {
     accountBilledUsd: '0.000000',
     balanceUsd: null,
     upstreamRateMultiplier: null,
+    upstreamEstimatedRateMultiplier: null,
     upstreamRateSource: null,
     lastCompleteMinute: null,
   });
@@ -126,6 +127,19 @@ test('snapshot uses the latest minute upstream rate and source without historica
   });
   assert.equal(rows[0].upstreamRateMultiplier, null);
   assert.equal(rows[0].upstreamRateSource, null);
+});
+
+test('snapshot keeps the latest estimated rate beside the API rate', () => {
+  const window = resolveAccountWindow('last1h', new Date('2026-07-25T12:34:56Z'));
+  const rows = buildSnapshotRows({
+    accounts: [{ id: 1 }],
+    minutes: [minute(1, '2026-07-25T12:33:00Z', {
+      upstreamRateMultiplier: '1.2', upstreamRateSource: 'api', upstreamEstimatedRateMultiplier: '1.35',
+    })],
+    window,
+  });
+  assert.equal(rows[0].upstreamRateMultiplier, '1.2');
+  assert.equal(rows[0].upstreamEstimatedRateMultiplier, '1.35');
 });
 
 test('refresh reads every account once and all windows share one complete minute', async () => {

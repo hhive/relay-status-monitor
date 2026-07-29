@@ -99,7 +99,9 @@ async function sendFeishuAccount(
 }
 
 function accountMetricLabel(metric: string): string {
-  return metric === 'balance_low' ? '上游余额低' : metric;
+  if (metric === 'balance_low') return '上游余额低';
+  if (metric === 'upstream_rate_deviation') return '上游倍率偏差高';
+  return metric;
 }
 
 function genSign(timestamp: number, secret: string): string {

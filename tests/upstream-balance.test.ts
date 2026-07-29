@@ -155,8 +155,8 @@ test('rate estimation uses deltas from the same API key cumulative counters only
   assert.equal(estimateUpstreamRateMultiplier({ previousKeyUsedUsd: 10, currentKeyUsedUsd: 11, baseBilledUsd: 0 }), null);
 });
 
-test('balance collection writes balance and direct-or-estimated rate for the previous complete minute', async () => {
-  const writes: Array<{ bucketStart: Date; rows: Array<{ accountId: number; balanceUsd: number | null; upstreamKeyUsedUsd: number | null; upstreamKeyStandardUsd: number | null; upstreamRateMultiplier: number | null; upstreamRateSource: string | null }> }> = [];
+test('balance collection writes direct and estimated rates together for the previous complete minute', async () => {
+  const writes: Array<{ bucketStart: Date; rows: Array<{ accountId: number; balanceUsd: number | null; upstreamKeyUsedUsd: number | null; upstreamKeyStandardUsd: number | null; upstreamRateMultiplier: number | null; upstreamEstimatedRateMultiplier: number | null; upstreamRateSource: string | null }> }> = [];
   const active = [
     { id: 1, sourceAccountId: 'remote-1' },
     { id: 2, sourceAccountId: 'remote-2' },
@@ -175,7 +175,7 @@ test('balance collection writes balance and direct-or-estimated rate for the pre
       if (credential.sourceAccountId === 'remote-4') return { balanceUsd: 7, keyUsedUsd: 4, keyStandardUsd: null };
       throw new Error('isolated account failure');
     },
-    rateProbe: async (credential) => ['remote-1', 'remote-4'].includes(credential.sourceAccountId) ? null : 2,
+    rateProbe: async (credential) => credential.sourceAccountId === 'remote-1' ? 1.2 : credential.sourceAccountId === 'remote-2' ? 2 : null,
     estimateRate: async (_accountId, _bucketStart, snapshot) => snapshot.keyUsedUsd === 3 ? 1.25 : snapshot.keyUsedUsd === 4 ? 1.1 : null,
     write: async (bucketStart, rows) => { writes.push({ bucketStart, rows }); },
   });
@@ -183,10 +183,10 @@ test('balance collection writes balance and direct-or-estimated rate for the pre
   assert.deepEqual(result, { attempted: 3, succeeded: 2, unavailable: 2 });
   assert.equal(writes[0].bucketStart.toISOString(), '2026-07-29T12:33:00.000Z');
   assert.deepEqual(writes[0].rows, [
-    { accountId: 1, balanceUsd: 4.5, upstreamKeyUsedUsd: 3, upstreamKeyStandardUsd: 2, upstreamRateMultiplier: 1.25, upstreamRateSource: 'estimated' },
-    { accountId: 2, balanceUsd: null, upstreamKeyUsedUsd: null, upstreamKeyStandardUsd: null, upstreamRateMultiplier: 2, upstreamRateSource: 'api' },
-    { accountId: 3, balanceUsd: null, upstreamKeyUsedUsd: null, upstreamKeyStandardUsd: null, upstreamRateMultiplier: null, upstreamRateSource: null },
-    { accountId: 4, balanceUsd: 7, upstreamKeyUsedUsd: 4, upstreamKeyStandardUsd: null, upstreamRateMultiplier: 1.1, upstreamRateSource: 'estimated' },
+    { accountId: 1, balanceUsd: 4.5, upstreamKeyUsedUsd: 3, upstreamKeyStandardUsd: 2, upstreamRateMultiplier: 1.2, upstreamEstimatedRateMultiplier: 1.25, upstreamRateSource: 'api' },
+    { accountId: 2, balanceUsd: null, upstreamKeyUsedUsd: null, upstreamKeyStandardUsd: null, upstreamRateMultiplier: 2, upstreamEstimatedRateMultiplier: null, upstreamRateSource: 'api' },
+    { accountId: 3, balanceUsd: null, upstreamKeyUsedUsd: null, upstreamKeyStandardUsd: null, upstreamRateMultiplier: null, upstreamEstimatedRateMultiplier: null, upstreamRateSource: null },
+    { accountId: 4, balanceUsd: 7, upstreamKeyUsedUsd: 4, upstreamKeyStandardUsd: null, upstreamRateMultiplier: 1.1, upstreamEstimatedRateMultiplier: 1.1, upstreamRateSource: 'estimated' },
   ]);
 });
 
@@ -205,6 +205,12 @@ test('schema, restricted view, cycle order, and account list expose nullable bal
   assert.match(schema, /model AccountMetricMinute[\s\S]*baseBilledUsd\s+Decimal/);
   assert.match(schema, /model AccountMetricMinute[\s\S]*upstreamRateMultiplier\s+Decimal\?/);
   assert.match(schema, /model AccountMetricSnapshot[\s\S]*upstreamRateMultiplier\s+Decimal\?/);
+  assert.match(schema, /model AccountMetricMinute[\s\S]*upstreamEstimatedRateMultiplier\s+Decimal\?/);
+  assert.match(schema, /model AccountMetricSnapshot[\s\S]*upstreamEstimatedRateMultiplier\s+Decimal\?/);
+  const comparisonMigration = source('prisma/migrations/20260729200000_add_upstream_rate_comparison/migration.sql');
+  assert.match(comparisonMigration, /ADD COLUMN "upstreamEstimatedRateMultiplier" DECIMAL\(20,8\)/);
+  assert.match(comparisonMigration, /upstream_rate_deviation/);
+  assert.doesNotMatch(comparisonMigration, /DROP\s+(?:TABLE|COLUMN|SCHEMA|DATABASE)|CASCADE/i);
   assert.match(rateMigration, /ADD COLUMN "baseBilledUsd" DECIMAL\(24,6\) NOT NULL DEFAULT 0/);
   assert.match(rateMigration, /ADD COLUMN "upstreamKeyUsedUsd" DECIMAL\(24,6\)/);
   assert.match(rateMigration, /ADD COLUMN "upstreamRateMultiplier" DECIMAL\(20,8\)/);

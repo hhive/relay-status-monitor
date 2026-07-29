@@ -96,6 +96,32 @@ const minute = (overrides: Partial<AccountMetricMinuteRecord> = {}): AccountMetr
   inputTokens: BigInt(100), cacheReadTokens: BigInt(20), cacheCreationTokens: BigInt(0), balanceUsd: null, ...overrides,
 });
 
+test('upstream rate deviation alerts only when the latest API and estimated rates differ by more than ten percent', async () => {
+  const deviationRule = rule({ metric: 'upstream_rate_deviation' as never, operator: 'gt', threshold: 0.1, minRequests: 0 });
+  const rates = minute({
+    upstreamRateMultiplier: '1.2', upstreamRateSource: 'api', upstreamEstimatedRateMultiplier: '1.32',
+  } as never);
+  const boundary = harness({ rules: [deviationRule], minutes: [rates] });
+  await boundary.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.equal(boundary.created.length, 0, 'exactly ten percent must remain normal');
+
+  rates.upstreamEstimatedRateMultiplier = '1.33';
+  const exceeded = harness({ rules: [deviationRule], minutes: [rates] });
+  await exceeded.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.equal(exceeded.created.length, 1);
+  assert.ok(Math.abs(Number(exceeded.created[0]?.metricValue) - (1.33 / 1.2 - 1)) < 1e-12);
+  assert.match(String(exceeded.created[0]?.message), /接口 1\.2x.*估算 1\.33x.*偏差 10\.83%/);
+
+  for (const unavailable of [
+    { upstreamRateMultiplier: null, upstreamRateSource: null, upstreamEstimatedRateMultiplier: '1.33' },
+    { upstreamRateMultiplier: '1.2', upstreamRateSource: 'api', upstreamEstimatedRateMultiplier: null },
+  ]) {
+    const run = harness({ rules: [deviationRule], minutes: [minute(unavailable as never)] });
+    await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+    assert.equal(run.created.length, 0);
+  }
+});
+
 test('balance alert is created only on a successful high-to-low crossing', async () => {
   const balanceRule = rule({ metric: 'balance_low' as never, operator: 'lte', threshold: 5, minRequests: 0, cooldownMin: 60 });
   const firstLow = harness({ rules: [balanceRule], minutes: [minute({ balanceUsd: '5' } as never)] });

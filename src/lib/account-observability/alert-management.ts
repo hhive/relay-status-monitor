@@ -7,6 +7,7 @@ export const ACCOUNT_ALERT_RULE_SPECS = [
   { metric: 'first_token_p95_high', name: '账号首TokenP95高', operators: ['gt', 'gte'], threshold: [0, 3_600_000], samples: true },
   { metric: 'cache_hit_low', name: '账号缓存命中率低', operators: ['lt', 'lte'], threshold: [0, 1], samples: true, promptTokens: true },
   { metric: 'balance_low', name: '上游余额低', operators: ['lt', 'lte'], threshold: [0, 1_000_000_000], samples: false },
+  { metric: 'upstream_rate_deviation', name: '上游倍率偏差高', operators: ['gt', 'gte'], threshold: [0, 1_000_000_000], samples: false },
   { metric: 'unschedulable', name: '账号持续不可调度', operators: ['eq'], threshold: [1, 1], samples: false },
   { metric: 'sync_stale', name: '账号同步陈旧', operators: ['gt', 'gte'], threshold: [0, 10_080], samples: false },
 ] as const;
