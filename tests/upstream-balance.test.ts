@@ -68,6 +68,30 @@ test('New API key usage converts the authenticated token used quota with instanc
   assert.deepEqual(calls, ['https://new.example/api/status', 'https://new.example/api/usage/token/']);
 });
 
+test('New API key usage accepts total_used only for successful compatible responses', async () => {
+  const queryResponse = (usageResponse: Response) => queryNewApiKeyUsedUsd(
+    { baseUrl: 'https://new.example', apiKey: 'sk-key' },
+    async (input) => String(input).endsWith('/api/status')
+      ? new Response(JSON.stringify({ success: true, data: { quota_per_unit: 500000 } }), { status: 200 })
+      : usageResponse,
+  );
+  const query = (usageBody: unknown, status = 200) => queryResponse(
+    new Response(JSON.stringify(usageBody), { status }),
+  );
+
+  assert.equal(await query({ code: true, data: { total_used: 750000 } }), 1.5);
+  assert.equal(await query({ success: true, code: true, data: { used_quota: 500000, total_used: 750000 } }), 1);
+  for (const body of [
+    { code: false, data: { total_used: 750000 } },
+    { code: true, data: {} },
+    { code: true, data: { total_used: 'invalid' } },
+  ]) {
+    assert.equal(await query(body), null);
+  }
+  assert.equal(await query({ code: true, data: { total_used: 750000 } }, 429), null);
+  assert.equal(await queryResponse(new Response('{', { status: 200 })), null);
+});
+
 test('configured New API mode collects key usage without dashboard wallet credentials', async () => {
   const snapshot = await queryConfiguredUpstreamUsageSnapshot(
     { baseUrl: 'https://new.example', apiKey: 'sk-key', mode: 'newapi' },

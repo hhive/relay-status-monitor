@@ -196,8 +196,12 @@ export async function queryNewApiKeyUsedUsd(
     fetchImpl,
   );
   const data = usage?.data && typeof usage.data === 'object' ? usage.data as Record<string, unknown> : null;
-  const usedQuota = finiteBalance(data?.used_quota);
-  return usage?.success === true && usedQuota != null ? finiteBalance(usedQuota / quotaPerUnit) : null;
+  const usedQuota = usage?.success === true
+    ? finiteBalance(data?.used_quota)
+    : usage?.code === true
+      ? finiteBalance(data?.total_used)
+      : null;
+  return usedQuota != null ? finiteBalance(usedQuota / quotaPerUnit) : null;
 }
 
 export async function queryConfiguredUpstreamBalance(
