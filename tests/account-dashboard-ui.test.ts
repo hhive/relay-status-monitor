@@ -112,6 +112,19 @@ test('account list exposes persisted sorting on desktop and mobile', async () =>
   assert.equal(sort.ACCOUNT_SORT_KEYS.includes('upstreamRateMultiplier'), true);
 });
 
+test('desktop account list keeps the account header and cells fixed during horizontal scrolling', () => {
+  const shared = source('src/components/account-observability/account-overview.tsx');
+  const accountHeader = shared.match(/<SortableAccountHeader sortKey="account"[^>]*\/>/)?.[0] ?? '';
+  const tableRow = shared.match(/function AccountTableRow[\s\S]*?\n\}/)?.[0] ?? '';
+
+  assert.match(accountHeader, /className="sticky left-0 z-20/);
+  assert.match(tableRow, /<td className="sticky left-0 z-\[1\]/);
+  assert.match(accountHeader, /bg-card/);
+  assert.match(tableRow, /bg-card/);
+  assert.match(accountHeader, /shadow-\[2px_0_0_hsl\(var\(--border\)\)\]/);
+  assert.match(tableRow, /group-hover:bg-muted\/40/);
+});
+
 test('account detail requests each selected window and exposes five trend views plus minute details', () => {
   const detail = source('src/app/(dashboard)/accounts/[id]/page.tsx');
   assert.match(detail, /useState<AccountWindowKey>\('last1h'\)/);

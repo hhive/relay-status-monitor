@@ -389,7 +389,7 @@ function AccountList({ data, accounts, coverage, pageSize, onPageSizeChange, onP
     <div className="hidden overflow-x-auto rounded-md border md:block">
       <table className="w-full min-w-[1180px] text-sm">
         <thead className="sticky top-0 z-10 bg-card shadow-[0_1px_0_hsl(var(--border))]"><tr className="text-left">
-          <SortableAccountHeader sortKey="account" state={sortState} onSort={onSort} />
+          <SortableAccountHeader sortKey="account" state={sortState} onSort={onSort} className="sticky left-0 z-20 w-56 min-w-56 max-w-56 bg-card shadow-[2px_0_0_hsl(var(--border))]" />
           <SortableAccountHeader sortKey="platformGroup" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="schedulable" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="availability" metric="availability" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
@@ -428,11 +428,11 @@ function AccountList({ data, accounts, coverage, pageSize, onPageSizeChange, onP
   </>;
 }
 
-function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverage, title }: { sortKey: AccountSortKey; metric?: AccountMetricKey; state: AccountSortState; onSort: (key: AccountSortKey) => void; window?: AccountWindowDto; coverage?: AccountCoverageDto; title?: string }) {
+function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverage, title, className }: { sortKey: AccountSortKey; metric?: AccountMetricKey; state: AccountSortState; onSort: (key: AccountSortKey) => void; window?: AccountWindowDto; coverage?: AccountCoverageDto; title?: string; className?: string }) {
   const active = state.key === sortKey;
   const SortIcon = active ? state.order === 'asc' ? ArrowUp : ArrowDown : ArrowUpDown;
   const label = ACCOUNT_SORT_LABELS[sortKey];
-  return <th className="px-3 py-3 font-medium" title={title} aria-sort={active ? state.order === 'asc' ? 'ascending' : 'descending' : 'none'}>
+  return <th className={cn('px-3 py-3 font-medium', className)} title={title} aria-sort={active ? state.order === 'asc' ? 'ascending' : 'descending' : 'none'}>
     <span className="inline-flex items-center gap-1 whitespace-nowrap">
       <button type="button" className="inline-flex items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onSort(sortKey)} aria-label={`${label}，点击切换排序`}>
         {label}<SortIcon className="size-3.5" aria-hidden="true" />
@@ -444,8 +444,8 @@ function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverag
 
 function AccountTableRow({ account, pending, onToggleAlert }: { account: AccountListItemDto; pending: boolean; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
   const metrics = account.metrics;
-  return <tr className="border-b last:border-0 hover:bg-muted/40">
-    <td className="px-3 py-3"><Link href={`/accounts/${account.id}`} className="font-medium text-primary hover:underline">{account.name}</Link><div className="text-xs text-muted-foreground">{account.type ?? '未知类型'}</div></td>
+  return <tr className="group border-b last:border-0 hover:bg-muted/40">
+    <td className="sticky left-0 z-[1] w-56 min-w-56 max-w-56 bg-card px-3 py-3 shadow-[2px_0_0_hsl(var(--border))] group-hover:bg-muted/40"><Link href={`/accounts/${account.id}`} className="font-medium text-primary hover:underline">{account.name}</Link><div className="text-xs text-muted-foreground">{account.type ?? '未知类型'}</div></td>
     <td className="max-w-56 px-3 py-3"><div>{account.platform ?? '未知平台'}</div><div className="truncate text-xs text-muted-foreground">{formatAccountGroups(account.groupProjection)}</div></td>
     <td className="px-3 py-3"><Badge variant={account.schedulable ? 'outline' : 'destructive'}>{account.schedulable ? '可调度' : '不可调度'}</Badge></td>
     {ACCOUNT_LIST_METRICS.map((key) => <td key={key} className="whitespace-nowrap px-3 py-3 tabular-nums">{formatAccountMetric(key, metrics[key])}{key === 'upstreamRateMultiplier' && metrics.upstreamRateSource ? <span className="ml-1 text-xs text-muted-foreground">· {metrics.upstreamRateSource === 'api' ? '接口' : '估算'}</span> : null}</td>)}
