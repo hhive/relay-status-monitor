@@ -44,6 +44,7 @@ interface AccountListRawRow {
   cacheHitRate: number | null;
   userBilledUsd: unknown;
   accountBilledUsd: unknown;
+  balanceUsd: unknown;
   lastCompleteMinute: Date | null;
 }
 
@@ -170,6 +171,7 @@ function fixedSortExpression(key: AccountSortKey, requestNow: Date): Prisma.Sql[
     case 'cacheHitRate': return [Prisma.sql`s."cacheHitRate"`];
     case 'userBilledUsd': return [Prisma.sql`s."userBilledUsd"`];
     case 'accountBilledUsd': return [Prisma.sql`s."accountBilledUsd"`];
+    case 'balanceUsd': return [Prisma.sql`s."balanceUsd"`];
     case 'eligibleCount': return [Prisma.sql`s."eligibleCount"`];
     case 'sync': return [Prisma.sql`CASE
       WHEN a."lastSyncedAt" IS NULL OR s."lastCompleteMinute" IS NULL THEN NULL
@@ -188,7 +190,7 @@ function orderBySql(key: AccountSortKey, order: AccountSortOrder, requestNow: Da
   const direction = order === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
   const expressions = fixedSortExpression(key, requestNow);
   const snapshotMetric = ['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate',
-    'userBilledUsd', 'accountBilledUsd', 'eligibleCount'].includes(key);
+    'userBilledUsd', 'accountBilledUsd', 'balanceUsd', 'eligibleCount'].includes(key);
   const parts = expressions.map((expression) => Prisma.sql`${expression} ${direction} NULLS LAST`);
   return Prisma.join([
     ...(snapshotMetric ? [Prisma.sql`CASE WHEN s."id" IS NULL THEN 1 ELSE 0 END ASC`] : []),
@@ -254,7 +256,7 @@ export function buildAccountListPageQuery(
       a."syncState", a."groupProjection", a."lastSyncedAt", a."alertEnabled",
       s."id" AS "snapshotId", s."eligibleCount", s."availability", s."errorRate",
       s."durationP95Ms", s."firstTokenP95Ms", s."cacheHitRate", s."userBilledUsd",
-      s."accountBilledUsd", s."lastCompleteMinute"
+      s."accountBilledUsd", s."balanceUsd", s."lastCompleteMinute"
     FROM account_text a
     LEFT JOIN "AccountMetricSnapshot" s ON s."accountId" = a."id" AND s."batchId" = ${batchId}
     WHERE ${where}
@@ -296,6 +298,7 @@ function listItem(row: AccountListRawRow): AccountListItemDto {
       cacheHitRate: hasSnapshot ? row.cacheHitRate : null,
       userBilledUsd: decimalString(hasSnapshot ? row.userBilledUsd : null, '0.000000'),
       accountBilledUsd: decimalString(hasSnapshot ? row.accountBilledUsd : null, '0.000000'),
+      balanceUsd: hasSnapshot && row.balanceUsd != null ? decimalString(row.balanceUsd, '') : null,
     },
   };
 }

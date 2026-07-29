@@ -65,6 +65,7 @@ test('dynamic API routes use the strict parser instead of Number coercion', () =
     'src/app/api/account-alert-rules/[id]/route.ts',
     'src/app/api/accounts/[id]/route.ts',
     'src/app/api/accounts/[id]/billing-alert/route.ts',
+    'src/app/api/accounts/[id]/balance-credential/route.ts',
   ];
 
   for (const route of routes) {

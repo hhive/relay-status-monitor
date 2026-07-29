@@ -40,6 +40,12 @@ enum AccountMetricSnapshotWindow {
   LAST_24H
 }
 
+enum AccountBalanceMode {
+  AUTO
+  SUB2API
+  NEWAPI
+}
+
 // ============ 核心表 ============
 
 /// Sub2API 账号只读投影
@@ -82,9 +88,21 @@ model Sub2ApiAccount {
   syncRuns                   AccountSyncRun[]
   alertEvents                AccountAlertEvent[]
   alertRules                 AccountAlertRule[]
+  balanceCredential           AccountBalanceCredential?
 
   @@index([syncState, remoteStatus])
   @@index([lastSyncedAt])
+}
+
+model AccountBalanceCredential {
+  id                          Int                @id @default(autoincrement())
+  accountId                   Int                @unique
+  account                     Sub2ApiAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  mode                        AccountBalanceMode @default(AUTO)
+  newApiUserId                String?
+  newApiAccessTokenCiphertext String?            @db.Text
+  createdAt                   DateTime           @default(now())
+  updatedAt                   DateTime           @updatedAt
 }
 
 model AccountMetricSnapshotBatch {
@@ -116,6 +134,7 @@ model AccountMetricSnapshot {
   cacheHitRate       Float?
   userBilledUsd      Decimal                    @default(0) @db.Decimal(24, 6)
   accountBilledUsd   Decimal                    @default(0) @db.Decimal(24, 6)
+  balanceUsd         Decimal?                   @db.Decimal(24, 6)
   lastCompleteMinute DateTime?
 
   @@unique([batchId, accountId])
@@ -140,6 +159,7 @@ model AccountMetricMinute {
   cacheCreationTokens   BigInt          @default(0)
   userBilledUsd         Decimal         @default(0) @db.Decimal(24, 6)
   accountBilledUsd      Decimal         @default(0) @db.Decimal(24, 6)
+  balanceUsd            Decimal?        @db.Decimal(24, 6)
   errorStatusCounts     Json?
   errorPhaseCounts      Json?
   sourceMaxUsageId      String?

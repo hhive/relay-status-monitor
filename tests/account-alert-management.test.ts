@@ -18,7 +18,7 @@ import {
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = (relative: string) => readFileSync(path.join(projectRoot, relative), 'utf8');
 
-test('global account alert rules expose exactly seven server-owned identities', () => {
+test('global account alert rules expose exactly eight server-owned identities', () => {
   assert.deepEqual(
     ACCOUNT_ALERT_RULE_SPECS.map(({ metric }) => metric),
     [
@@ -27,14 +27,15 @@ test('global account alert rules expose exactly seven server-owned identities', 
       'duration_p95_high',
       'first_token_p95_high',
       'cache_hit_low',
+      'balance_low',
       'unschedulable',
       'sync_stale',
     ],
   );
-  assert.equal(new Set(ACCOUNT_ALERT_RULE_SPECS.map(({ name }) => name)).size, 7);
+  assert.equal(new Set(ACCOUNT_ALERT_RULE_SPECS.map(({ name }) => name)).size, 8);
 });
 
-test('legacy stored rule metrics normalize to the seven canonical event metrics', () => {
+test('legacy stored rule metrics normalize to canonical event metrics', () => {
   assert.deepEqual(
     ['availability', 'error_rate', 'duration_p95', 'first_token_p95', 'cache_hit_rate']
       .map(normalizeGlobalAccountAlertMetric),

@@ -69,7 +69,7 @@ const TREND_VIEWS: Record<'quality' | 'latency' | 'billing', { label: string; se
 };
 
 const SUMMARY_METRICS: AccountAggregateMetricKey[] = ['eligibleCount', 'availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd'];
-const ACCOUNT_LIST_METRICS = ['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'eligibleCount'] as const;
+const ACCOUNT_LIST_METRICS = ['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'balanceUsd', 'eligibleCount'] as const;
 
 export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   const [overview, setOverview] = useState<AccountOverviewResponseDto | null>(null);
@@ -326,6 +326,7 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
 function SummaryGrid({ data }: { data: AccountOverviewResponseDto }) {
   const values: Record<AccountMetricKey, number | string | null> = {
     ...data.summary,
+    balanceUsd: data.summary.balanceUsd ?? null,
     selectedAccountCount: data.summary.selectedAccountCount,
     openAlertCount: data.openAlertCount,
   };
@@ -397,6 +398,7 @@ function AccountList({ data, accounts, coverage, pageSize, onPageSizeChange, onP
           <SortableAccountHeader sortKey="cacheHitRate" metric="cacheHitRate" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="userBilledUsd" metric="userBilledUsd" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="accountBilledUsd" metric="accountBilledUsd" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
+          <SortableAccountHeader sortKey="balanceUsd" metric="balanceUsd" state={sortState} onSort={onSort} window={data.window} coverage={coverage} title="上游余额" />
           <SortableAccountHeader sortKey="eligibleCount" metric="eligibleCount" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="sync" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="alertEnabled" state={sortState} onSort={onSort} />
@@ -425,11 +427,11 @@ function AccountList({ data, accounts, coverage, pageSize, onPageSizeChange, onP
   </>;
 }
 
-function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverage }: { sortKey: AccountSortKey; metric?: AccountAggregateMetricKey; state: AccountSortState; onSort: (key: AccountSortKey) => void; window?: AccountWindowDto; coverage?: AccountCoverageDto }) {
+function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverage, title }: { sortKey: AccountSortKey; metric?: AccountAggregateMetricKey; state: AccountSortState; onSort: (key: AccountSortKey) => void; window?: AccountWindowDto; coverage?: AccountCoverageDto; title?: string }) {
   const active = state.key === sortKey;
   const SortIcon = active ? state.order === 'asc' ? ArrowUp : ArrowDown : ArrowUpDown;
   const label = ACCOUNT_SORT_LABELS[sortKey];
-  return <th className="px-3 py-3 font-medium" aria-sort={active ? state.order === 'asc' ? 'ascending' : 'descending' : 'none'}>
+  return <th className="px-3 py-3 font-medium" title={title} aria-sort={active ? state.order === 'asc' ? 'ascending' : 'descending' : 'none'}>
     <span className="inline-flex items-center gap-1 whitespace-nowrap">
       <button type="button" className="inline-flex items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onSort(sortKey)} aria-label={`${label}，点击切换排序`}>
         {label}<SortIcon className="size-3.5" aria-hidden="true" />

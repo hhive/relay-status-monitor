@@ -74,7 +74,7 @@ async function sendFeishuAccount(
           { is_short: true, text: { tag: 'lark_md', content: `**账号**\n${account.name}` } },
           { is_short: true, text: { tag: 'lark_md', content: `**平台**\n${account.platform ?? '-'}` } },
           { is_short: true, text: { tag: 'lark_md', content: `**账号 ID**\n${account.sourceAccountId}` } },
-          { is_short: true, text: { tag: 'lark_md', content: `**指标**\n${incident.metric}` } },
+          { is_short: true, text: { tag: 'lark_md', content: `**指标**\n${accountMetricLabel(incident.metric)}` } },
           { is_short: true, text: { tag: 'lark_md', content: `**级别**\n${incident.severity ?? 'WARNING'}` } },
         ],
       },
@@ -96,6 +96,10 @@ async function sendFeishuAccount(
   if (!outbound.response.ok) throw new Error(`飞书 Webhook 发送失败: HTTP ${outbound.response.status}`);
   const responseBody = await outbound.response.json().catch(() => null) as { code?: unknown } | null;
   if (typeof responseBody?.code === 'number' && responseBody.code !== 0) throw new Error(`飞书返回错误: code=${responseBody.code}`);
+}
+
+function accountMetricLabel(metric: string): string {
+  return metric === 'balance_low' ? '上游余额低' : metric;
 }
 
 function genSign(timestamp: number, secret: string): string {

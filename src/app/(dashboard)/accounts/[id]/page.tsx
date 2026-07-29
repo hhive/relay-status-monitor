@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ChartNoAxesCombined, Save } from 'lucide-react';
+import { ArrowLeft, ChartNoAxesCombined, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AccountTrendChart, type AccountTrendSeries } from '@/components/account-observability/account-trend-chart';
 import { MetricDefinitionTooltip } from '@/components/account-observability/metric-definition-tooltip';
@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -36,6 +37,8 @@ const DETAIL_TRENDS: Record<'quality' | 'latency' | 'cache' | 'billing' | 'error
 
 const SUMMARY_KEYS: AccountAggregateMetricKey[] = ['availability', 'errorRate', 'averageDurationMs', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'successCount', 'upstreamErrorCount'];
 
+type BalanceMode = 'auto' | 'sub2api' | 'newapi';
+
 export default function AccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [accountId, setAccountId] = useState('');
   const [data, setData] = useState<AccountDetailDto | null>(null);
@@ -48,6 +51,11 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
   const [masterAlertEnabled, setMasterAlertEnabled] = useState(true);
   const [masterAlertPending, setMasterAlertPending] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [balanceMode, setBalanceMode] = useState<BalanceMode>('auto');
+  const [newApiUserId, setNewApiUserId] = useState('');
+  const [newApiAccessToken, setNewApiAccessToken] = useState('');
+  const [accessTokenConfigured, setAccessTokenConfigured] = useState(false);
+  const [balanceCredentialPending, setBalanceCredentialPending] = useState(false);
   const masterAlertPendingRef = useRef(new Set<number>());
   const requestSequence = useRef(0);
   const billingAlertRuleRef = useRef<HTMLElement | null>(null);
@@ -77,6 +85,20 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
       const alert = await response.json();
       setAlertEnabled(Boolean(alert.enabled));
       setAlertThreshold(alert.threshold == null ? '' : String(alert.threshold));
+    });
+  }, [accountId]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    void apiFetch(`/api/accounts/${accountId}/balance-credential`).then(async (response) => {
+      if (!response.ok) return;
+      const config = await response.json() as {
+        mode: BalanceMode; newApiUserId: string | null; accessTokenConfigured: boolean;
+      };
+      setBalanceMode(config.mode);
+      setNewApiUserId(config.newApiUserId ?? '');
+      setAccessTokenConfigured(config.accessTokenConfigured);
+      setNewApiAccessToken('');
     });
   }, [accountId]);
 
@@ -129,6 +151,47 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
     } catch { toast.error('倍率告警保存失败'); } finally { setSaving(false); }
   }
 
+  async function saveBalanceCredential() {
+    setBalanceCredentialPending(true);
+    try {
+      const response = await apiFetch(`/api/accounts/${accountId}/balance-credential`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: balanceMode,
+          newApiUserId,
+          ...(newApiAccessToken.trim() ? { accessToken: newApiAccessToken } : {}),
+        }),
+      });
+      const body = await response.json() as { error?: string; accessTokenConfigured?: boolean };
+      if (!response.ok) throw new Error(body.error || '余额凭据保存失败');
+      setAccessTokenConfigured(Boolean(body.accessTokenConfigured));
+      setNewApiAccessToken('');
+      toast.success('余额接口配置已保存');
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : '余额凭据保存失败');
+    } finally {
+      setBalanceCredentialPending(false);
+    }
+  }
+
+  async function clearBalanceCredential() {
+    setBalanceCredentialPending(true);
+    try {
+      const response = await apiFetch(`/api/accounts/${accountId}/balance-credential`, { method: 'DELETE' });
+      if (!response.ok) throw new Error();
+      setBalanceMode('auto');
+      setNewApiUserId('');
+      setNewApiAccessToken('');
+      setAccessTokenConfigured(false);
+      toast.success('余额接口配置已清除');
+    } catch {
+      toast.error('余额接口配置清除失败');
+    } finally {
+      setBalanceCredentialPending(false);
+    }
+  }
+
   if (loading && !data) return <DetailSkeleton />;
   if (!data) return <div className="py-16 text-center text-sm text-muted-foreground">{error || '账号数据暂不可用'}</div>;
 
@@ -162,6 +225,38 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
     <section className="space-y-2 border-y py-4" aria-labelledby="account-alert-heading">
       <div className="flex flex-col gap-1"><h2 id="account-alert-heading" className="text-sm font-semibold">账号告警总开关</h2><p className="text-xs text-muted-foreground">关闭后该账号的全部告警（全局规则与倍率告警）都不再触发或推送。</p></div>
       <label className="flex items-center gap-2 text-sm"><Switch checked={masterAlertEnabled} disabled={masterAlertPending} onCheckedChange={(value) => void toggleMasterAlert(value)} aria-label="账号告警总开关" />{masterAlertEnabled ? '告警已开启' : '告警已关闭'}</label>
+    </section>
+
+    <section className="space-y-3 border-y py-4" aria-labelledby="balance-credential-heading">
+      <div className="flex flex-col gap-1">
+        <h2 id="balance-credential-heading" className="text-sm font-semibold">上游余额接口</h2>
+        <p className="text-xs text-muted-foreground">Access Token：{accessTokenConfigured ? '已配置' : '未配置'}</p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <label className="space-y-1 text-sm">
+          <span>余额接口模式</span>
+          <Select value={balanceMode} onValueChange={(value) => setBalanceMode(value as BalanceMode)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">自动识别</SelectItem>
+              <SelectItem value="sub2api">Sub2API</SelectItem>
+              <SelectItem value="newapi">New API</SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="space-y-1 text-sm">
+          <span>New API User ID</span>
+          <Input inputMode="numeric" value={newApiUserId} onChange={(event) => setNewApiUserId(event.target.value)} disabled={balanceMode === 'sub2api'} />
+        </label>
+        <label className="space-y-1 text-sm">
+          <span>New API Access Token</span>
+          <Input type="password" autoComplete="new-password" value={newApiAccessToken} onChange={(event) => setNewApiAccessToken(event.target.value)} disabled={balanceMode === 'sub2api'} placeholder={accessTokenConfigured ? '留空则保留原 Token' : '请输入 Access Token'} />
+        </label>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => void saveBalanceCredential()} disabled={balanceCredentialPending || !accountId}><Save data-icon="inline-start" />保存余额接口</Button>
+        <Button variant="outline" onClick={() => void clearBalanceCredential()} disabled={balanceCredentialPending || !accountId}><Trash2 data-icon="inline-start" />清除配置</Button>
+      </div>
     </section>
 
     <section

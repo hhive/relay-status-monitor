@@ -1,6 +1,7 @@
 import { prisma } from '../db';
 import { aggregateMinute, type ErrorEvent, type UsageEvent } from './aggregate';
 import { evaluateAccountAlerts } from './alerts';
+import { runUpstreamBalanceCollection } from './balance-collector';
 import { microUsdToDecimal, minuteBucket } from './metrics';
 import { refreshAccountMetricSnapshots } from './snapshot';
 import {
@@ -209,6 +210,7 @@ export async function runAccountObservabilityCycle(now = new Date()): Promise<{ 
       : { readCount: 0, ignoredCount: 0 };
     const metricRunner = productionMetricRunner(client);
     const metrics = await metricRunner(completeMetricWindow(now));
+    await runUpstreamBalanceCollection(now, client);
     await refreshAccountMetricSnapshots(now);
     await evaluateAccountAlerts(now);
     return { skipped: false, readCount: sync.readCount + metrics.readCount, ignoredCount: sync.ignoredCount + metrics.ignoredCount, writeCount: metrics.writeCount };

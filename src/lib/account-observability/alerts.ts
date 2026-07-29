@@ -1,5 +1,5 @@
 import { prisma } from '../db';
-import type { Prisma, Severity } from '@prisma/client';
+import { Prisma, type Severity } from '@prisma/client';
 import { sendAccountNotification } from '../alerts/channels/feishu';
 import { effectiveBillingRate, histogramP95, mergeLatencyHistogram, minuteBucket } from './metrics';
 import { normalizeGlobalAccountAlertMetric } from './alert-management';
@@ -11,6 +11,7 @@ export type AccountAlertMetric =
   | 'duration_p95_high'
   | 'first_token_p95_high'
   | 'cache_hit_low'
+  | 'balance_low'
   | 'upstream_rate_multiplier'
   | 'unschedulable'
   | 'sync_stale';
@@ -39,6 +40,13 @@ export interface AccountMetricMinuteRecord {
   inputTokens: bigint;
   cacheReadTokens: bigint;
   cacheCreationTokens: bigint;
+  balanceUsd: unknown;
+}
+
+interface AccountBalanceMinuteRecord {
+  accountId?: number;
+  bucketStart: Date;
+  balanceUsd: unknown;
 }
 
 export interface AccountAlertAccountRecord {
@@ -63,6 +71,7 @@ export interface AccountAlertAccountRecord {
   probePeakRateMultiplier: unknown;
   probeTimezone: string | null;
   metricMinutes: AccountMetricMinuteRecord[];
+  balanceHistory?: AccountBalanceMinuteRecord[];
 }
 
 export interface AccountAlertEventRecord {
@@ -87,6 +96,7 @@ interface NewAccountAlertEvent extends Omit<AccountAlertEventRecord, 'id' | 'not
 export interface AccountAlertDependencies {
   loadRules: () => Promise<AccountAlertRuleRecord[]>;
   loadAccounts: (window: { start: Date; end: Date }) => Promise<AccountAlertAccountRecord[]>;
+  loadBalanceHistory: (accountIds: number[], before: Date) => Promise<Map<number, AccountBalanceMinuteRecord[]>>;
   loadDisabledGroupIds: () => Promise<ReadonlySet<number>>;
   loadLatestMetricBucket: (accountId: number) => Promise<Date | null>;
   findOpenEvent: (accountId: number, ruleId: number) => Promise<AccountAlertEventRecord | null>;
@@ -153,7 +163,7 @@ async function setRecoveryNormalCount(
 }
 
 export function evaluateAccountMetricAlert(input: {
-  metric: Exclude<AccountAlertMetric, 'unschedulable' | 'sync_stale'>;
+  metric: Exclude<AccountAlertMetric, 'unschedulable' | 'sync_stale' | 'balance_low'>;
   value: number | null;
   threshold: number;
   eligibleCount: number;
@@ -185,7 +195,8 @@ function metricLabel(metric: AccountAlertMetric): string {
   const labels: Record<AccountAlertMetric, string> = {
     availability_low: '可用率', error_rate_high: '上游错误率', duration_p95_high: '总耗时 P95',
     first_token_p95_high: '首字耗时 P95', cache_hit_low: '缓存命中率',
-    upstream_rate_multiplier: '上游倍率', unschedulable: '不可调度', sync_stale: '同步陈旧分钟数',
+    balance_low: '上游余额', upstream_rate_multiplier: '上游倍率', unschedulable: '不可调度',
+    sync_stale: '同步陈旧分钟数',
   };
   return labels[metric];
 }
@@ -199,7 +210,7 @@ function evaluateRule(
   account: AccountAlertAccountRecord,
   now: Date,
   latestMetricBucketStart: Date | null,
-): { available: boolean; triggered: boolean; value: number | null } {
+): { available: boolean; triggered: boolean; value: number | null; crossed?: boolean } {
   if (rule.metric === 'unschedulable') {
     const value = account.schedulable === false ? 1 : 0;
     return { available: account.schedulable != null, triggered: compare(value, rule.operator, rule.threshold), value };
@@ -223,6 +234,34 @@ function evaluateRule(
       timezone: account.probeTimezone, receivedAt: account.probeLastSuccessAt, freshUntil: account.probeFreshAt }, now);
     if (value == null || !Number.isFinite(value)) return { available: false, triggered: false, value: null };
     return { available: true, triggered: compare(value, rule.operator, rule.threshold), value };
+  }
+
+  if (rule.metric === 'balance_low') {
+    const byBucket = new Map<number, AccountBalanceMinuteRecord>();
+    for (const item of account.balanceHistory ?? []) byBucket.set(item.bucketStart.getTime(), item);
+    for (const item of account.metricMinutes) byBucket.set(item.bucketStart.getTime(), item);
+    const ordered = [...byBucket.values()]
+      .sort((left, right) => left.bucketStart.getTime() - right.bucketStart.getTime());
+    const latest = ordered.at(-1);
+    const expectedBucket = minuteBucket(now).getTime() - 60_000;
+    if (!latest || latest.bucketStart.getTime() !== expectedBucket || latest.balanceUsd == null) {
+      return { available: false, triggered: false, value: null };
+    }
+    const currentValue = Number(latest.balanceUsd);
+    if (!Number.isFinite(currentValue)) return { available: false, triggered: false, value: null };
+    const successful = ordered
+      .slice(0, -1)
+      .filter((item) => item.balanceUsd != null)
+      .map((item) => ({ bucketStart: item.bucketStart, value: Number(item.balanceUsd) }))
+      .filter((item) => Number.isFinite(item.value));
+    const previous = successful.at(-1);
+    const triggered = compare(currentValue, rule.operator, rule.threshold);
+    return {
+      available: true,
+      triggered,
+      value: currentValue,
+      crossed: triggered && previous != null && !compare(previous.value, rule.operator, rule.threshold),
+    };
   }
 
   const minutes = account.metricMinutes;
@@ -261,7 +300,11 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
         : normalizeGlobalAccountAlertMetric(rule.metric);
       return metric ? [{ ...rule, metric }] : [];
     });
+    const balanceHistory = rules.some((rule) => rule.enabled && rule.metric === 'balance_low')
+      ? await dependencies.loadBalanceHistory(accounts.map((account) => account.id), end)
+      : new Map<number, AccountBalanceMinuteRecord[]>();
     for (const account of accounts) {
+      account.balanceHistory = balanceHistory.get(account.id) ?? [];
       if (account.alertEnabled === false) continue;
       if (shouldSuppressAccountAlerts(account.groupProjection, disabledGroupIds)) continue;
       const needsLatestMetricBucket = rules.some((rule) =>
@@ -301,8 +344,9 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
           }
           continue;
         }
+        if (rule.metric === 'balance_low' && result.crossed !== true) continue;
         const cooldownStart = new Date(now.getTime() - rule.cooldownMin * 60_000);
-        if (await dependencies.findRecentEvent(account.id, rule.id, cooldownStart)) continue;
+        if (rule.metric !== 'balance_low' && await dependencies.findRecentEvent(account.id, rule.id, cooldownStart)) continue;
         const event = await dependencies.createEvent({
           accountId: account.id, ruleId: rule.id, metric: rule.metric,
           severity: rule.severity ?? 'WARNING', metricValue: result.value,
@@ -324,6 +368,23 @@ export async function evaluateAccountAlerts(now = new Date()): Promise<void> {
       where: { syncState: 'ACTIVE', alertEnabled: true },
       include: { metricMinutes: { where: { bucketStart: { gte: start, lt: end } } } },
     })) as AccountAlertAccountRecord[],
+    loadBalanceHistory: async (accountIds, before) => {
+      if (accountIds.length === 0) return new Map();
+      const rows = await prisma.$queryRaw<Array<AccountBalanceMinuteRecord & { accountId: number }>>(Prisma.sql`
+        SELECT a."id" AS "accountId", balance."bucketStart", balance."balanceUsd"
+        FROM "Sub2ApiAccount" a
+        CROSS JOIN LATERAL (
+          SELECT m."bucketStart", m."balanceUsd"
+          FROM "AccountMetricMinute" m
+          WHERE m."accountId" = a."id" AND m."bucketStart" < ${before} AND m."balanceUsd" IS NOT NULL
+          ORDER BY m."bucketStart" DESC
+          LIMIT 2
+        ) balance
+        WHERE a."id" IN (${Prisma.join(accountIds)})`);
+      const result = new Map<number, AccountBalanceMinuteRecord[]>();
+      for (const row of rows) result.set(row.accountId, [...(result.get(row.accountId) ?? []), row]);
+      return result;
+    },
     loadDisabledGroupIds: async () => new Set((await prisma.groupAlertSetting.findMany({
       where: { alertEnabled: false },
       select: { groupId: true },

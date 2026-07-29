@@ -17,6 +17,8 @@ test('metric definitions are centralized and preserve no-data versus zero-cost s
   const definitions = await import('../src/lib/account-metric-definitions');
   assert.equal(definitions.formatAccountMetric('availability', null), '暂无数据');
   assert.equal(definitions.formatAccountMetric('userBilledUsd', '0'), '$0.00');
+  assert.equal(definitions.formatAccountMetric('balanceUsd', '-0.25'), '$-0.25');
+  assert.equal(definitions.formatAccountMetric('balanceUsd', null), '暂无数据');
   assert.equal(definitions.formatAccountMetric('durationP95Ms', 1234.6), '1,235 ms');
   assert.match(definitions.ACCOUNT_METRIC_DEFINITIONS.cacheHitRate.formula, /cacheReadTokens/);
   assert.match(definitions.ACCOUNT_METRIC_DEFINITIONS.accountBilledUsd.formula, /rate_multiplier/i);
@@ -87,7 +89,7 @@ test('account list exposes persisted sorting on desktop and mobile', async () =>
   const shared = source('src/components/account-observability/account-overview.tsx');
   const tooltip = source('src/components/account-observability/metric-definition-tooltip.tsx');
 
-  assert.equal(sort.ACCOUNT_SORT_KEYS.length, 13);
+  assert.equal(sort.ACCOUNT_SORT_KEYS.length, 14);
   assert.match(shared, /readAccountSortStateSafely\(\(\) => window\.localStorage\)/);
   assert.match(shared, /setSortState\(next\);[\s\S]*?writeAccountSortStateSafely\(\(\) => window\.localStorage, next\)/);
   assert.doesNotMatch(shared, /sortAccountSummaries/);

@@ -12,6 +12,7 @@ export const ACCOUNT_SORT_KEYS = [
   'cacheHitRate',
   'userBilledUsd',
   'accountBilledUsd',
+  'balanceUsd',
   'eligibleCount',
   'sync',
   'alertEnabled',
@@ -36,6 +37,7 @@ export const ACCOUNT_SORT_LABELS: Record<AccountSortKey, string> = {
   cacheHitRate: '缓存命中率',
   userBilledUsd: '用户计费',
   accountBilledUsd: '账号计费',
+  balanceUsd: '上游余额',
   eligibleCount: '有效请求',
   sync: '同步',
   alertEnabled: '告警',
@@ -175,7 +177,7 @@ function comparePrimary(left: SortableAccount, right: SortableAccount, state: Ac
   if (key === 'alertEnabled') {
     return compareNullable(left.alertEnabled, right.alertEnabled, (a, b) => compareNumber(Number(a), Number(b)), order);
   }
-  if (key === 'userBilledUsd' || key === 'accountBilledUsd') {
+  if (key === 'userBilledUsd' || key === 'accountBilledUsd' || key === 'balanceUsd') {
     return compareNullable(left.metrics[key], right.metrics[key], compareDecimals, order);
   }
   return compareNullable(finiteNumber(left.metrics[key]), finiteNumber(right.metrics[key]), compareNumber, order);

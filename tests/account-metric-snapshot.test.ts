@@ -34,6 +34,7 @@ function minute(accountId: number, bucketStart: string, values: Record<string, u
     cacheCreationTokens: BigInt(0),
     userBilledUsd: '0',
     accountBilledUsd: '0',
+    balanceUsd: null,
     errorStatusCounts: {},
     errorPhaseCounts: {},
     ...values,
@@ -92,8 +93,23 @@ test('snapshot rows include accounts without minute data', () => {
     cacheHitRate: null,
     userBilledUsd: '0.000000',
     accountBilledUsd: '0.000000',
+    balanceUsd: null,
     lastCompleteMinute: null,
   });
+});
+
+test('snapshot balance uses the last minute and never fills a current null from history', () => {
+  const window = resolveAccountWindow('last1h', new Date('2026-07-25T12:34:56Z'));
+  const rows = buildSnapshotRows({
+    accounts: [{ id: 1 }],
+    minutes: [
+      minute(1, '2026-07-25T12:32:00Z', { balanceUsd: '8.250000' }),
+      minute(1, '2026-07-25T12:33:00Z', { balanceUsd: null }),
+    ],
+    window,
+  });
+  assert.equal(rows[0].balanceUsd, null);
+  assert.equal(rows[0].lastCompleteMinute?.toISOString(), '2026-07-25T12:33:00.000Z');
 });
 
 test('refresh reads every account once and all windows share one complete minute', async () => {

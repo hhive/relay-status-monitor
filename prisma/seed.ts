@@ -16,6 +16,7 @@ const defaultAccountRules = [
   { name: '账号缓存命中率低', metric: 'cache_hit_low', operator: 'lt', threshold: 0.1, minRequests: 20, minPromptTokens: 10000, cooldownMin: 60 },
   { name: '账号持续不可调度', metric: 'unschedulable', operator: 'eq', threshold: 1, minRequests: 0, cooldownMin: 30 },
   { name: '账号同步陈旧', metric: 'sync_stale', operator: 'gt', threshold: 10, minRequests: 0, cooldownMin: 30 },
+  { name: '上游余额低', metric: 'balance_low', operator: 'lte', threshold: 5, minRequests: 0, cooldownMin: 0 },
 ];
 
 const defaultSettings: Record<string, string> = {

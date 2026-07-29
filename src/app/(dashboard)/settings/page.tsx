@@ -1077,17 +1077,18 @@ function metricLabel(metric: string): string {
     cache_hit_low: '缓存命中率',
     unschedulable: '不可调度状态',
     sync_stale: '同步陈旧分钟数',
+    balance_low: '上游余额',
   };
   return map[metric] || metric;
 }
 
 function ruleUsesTrafficSamples(metric: string): boolean {
-  return !['unschedulable', 'sync_stale'].includes(metric);
+  return !['unschedulable', 'sync_stale', 'balance_low'].includes(metric);
 }
 
 function ruleOperators(metric: string): string[] {
   if (metric === 'unschedulable') return ['eq'];
-  if (['availability_low', 'cache_hit_low'].includes(metric)) return ['lt', 'lte'];
+  if (['availability_low', 'cache_hit_low', 'balance_low'].includes(metric)) return ['lt', 'lte'];
   return ['gt', 'gte'];
 }
 

@@ -74,13 +74,22 @@ export const ERROR_PROJECTION_SQL = `
   WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz
 `;
 
+export const UPSTREAM_BALANCE_CREDENTIAL_PROJECTION_SQL = `
+  SELECT
+    source_account_id AS "sourceAccountId",
+    base_url AS "baseUrl",
+    api_key AS "apiKey"
+  FROM relay_monitor_upstream_balance_credentials
+`;
+
 export const CAPABILITY_PROJECTION_SQL = `
   SELECT
     COUNT(*) FILTER (WHERE table_name = 'accounts') = 14 AS accounts,
     COUNT(*) FILTER (WHERE table_name = 'account_groups') = 2 AS account_groups,
     COUNT(*) FILTER (WHERE table_name = 'groups') = 2 AS groups,
     COUNT(*) FILTER (WHERE table_name = 'usage_logs') = 13 AS usage_logs,
-    COUNT(*) FILTER (WHERE table_name = 'ops_error_logs') = 8 AS ops_error_logs
+    COUNT(*) FILTER (WHERE table_name = 'ops_error_logs') = 8 AS ops_error_logs,
+    COUNT(*) FILTER (WHERE table_name = 'relay_monitor_upstream_balance_credentials') = 3 AS balance_credentials
   FROM information_schema.columns
   WHERE table_schema = current_schema()
     AND (
@@ -88,7 +97,8 @@ export const CAPABILITY_PROJECTION_SQL = `
       (table_name = 'account_groups' AND column_name = ANY(ARRAY['account_id','group_id'])) OR
       (table_name = 'groups' AND column_name = ANY(ARRAY['id','name'])) OR
       (table_name = 'usage_logs' AND column_name = ANY(ARRAY['id','account_id','request_id','created_at','duration_ms','first_token_ms','input_tokens','cache_read_tokens','cache_creation_tokens','actual_cost','account_stats_cost','total_cost','account_rate_multiplier'])) OR
-      (table_name = 'ops_error_logs' AND column_name = ANY(ARRAY['id','account_id','request_id','client_request_id','created_at','error_phase','error_owner','status_code']))
+      (table_name = 'ops_error_logs' AND column_name = ANY(ARRAY['id','account_id','request_id','client_request_id','created_at','error_phase','error_owner','status_code'])) OR
+      (table_name = 'relay_monitor_upstream_balance_credentials' AND column_name = ANY(ARRAY['source_account_id','base_url','api_key']))
     )
 `;
 
@@ -98,11 +108,12 @@ export interface SchemaCapabilities {
   accounts: boolean;
   accountGroups: boolean;
   groups: boolean;
+  balanceCredentials: boolean;
 }
 
 export function assertSchemaCapabilities(capabilities: SchemaCapabilities): void {
   if (!capabilities.accounts || !capabilities.accountGroups || !capabilities.groups ||
-      !capabilities.usageLogs || !capabilities.opsErrorLogs) {
+      !capabilities.usageLogs || !capabilities.opsErrorLogs || !capabilities.balanceCredentials) {
     throw new Error('Sub2API observability schema capability check failed');
   }
 }
@@ -154,9 +165,15 @@ export async function queryProviderErrorRows<T>(client: ReadonlyClient, from: Da
   return withReadonlyTransaction(client, (tx) => tx.$queryRawUnsafe<T[]>(ERROR_PROJECTION_SQL, params.from, params.to));
 }
 
+export async function queryUpstreamBalanceCredentialRows<T>(client: ReadonlyClient): Promise<T[]> {
+  return withReadonlyTransaction(client, (tx) =>
+    tx.$queryRawUnsafe<T[]>(UPSTREAM_BALANCE_CREDENTIAL_PROJECTION_SQL));
+}
+
 export async function querySchemaCapabilities(client: ReadonlyClient): Promise<SchemaCapabilities> {
   const rows = await withReadonlyTransaction(client, (tx) => tx.$queryRawUnsafe<Array<{
     accounts: boolean; account_groups: boolean; groups: boolean; usage_logs: boolean; ops_error_logs: boolean;
+    balance_credentials: boolean;
   }>>(CAPABILITY_PROJECTION_SQL));
   const row = rows[0];
   const capabilities = {
@@ -165,6 +182,7 @@ export async function querySchemaCapabilities(client: ReadonlyClient): Promise<S
     groups: row?.groups === true,
     usageLogs: row?.usage_logs === true,
     opsErrorLogs: row?.ops_error_logs === true,
+    balanceCredentials: row?.balance_credentials === true,
   };
   assertSchemaCapabilities(capabilities);
   return capabilities;

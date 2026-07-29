@@ -22,6 +22,7 @@ export interface AccountMetricSnapshotWrite {
   cacheHitRate: number | null;
   userBilledUsd: string;
   accountBilledUsd: string;
+  balanceUsd: string | null;
   lastCompleteMinute: Date | null;
 }
 
@@ -40,10 +41,10 @@ export type SnapshotClient = Pick<typeof prisma,
 
 export function buildSnapshotRows(input: {
   accounts: Array<{ id: number }>;
-  minutes: Array<MetricMinuteAggregateInput & { accountId: number }>;
+  minutes: Array<MetricMinuteAggregateInput & { accountId: number; balanceUsd?: unknown }>;
   window: AccountWindow;
 }): AccountMetricSnapshotWrite[] {
-  const rowsByAccount = new Map<number, MetricMinuteAggregateInput[]>();
+  const rowsByAccount = new Map<number, Array<MetricMinuteAggregateInput & { balanceUsd?: unknown }>>();
   for (const row of input.minutes) {
     if (row.bucketStart < input.window.start || row.bucketStart >= input.window.end) continue;
     const rows = rowsByAccount.get(row.accountId) ?? [];
@@ -53,6 +54,9 @@ export function buildSnapshotRows(input: {
   return input.accounts.map(({ id: accountId }) => {
     const rows = rowsByAccount.get(accountId) ?? [];
     const metric = aggregateMetricMinutes(rows);
+    const latest = rows.reduce<(typeof rows)[number] | null>((value, row) =>
+      value === null || row.bucketStart > value.bucketStart ? row : value, null);
+    const balance = latest?.balanceUsd;
     return {
       accountId,
       successCount: metric.successCount,
@@ -65,8 +69,8 @@ export function buildSnapshotRows(input: {
       cacheHitRate: metric.cacheHitRate,
       userBilledUsd: metric.userBilledUsd,
       accountBilledUsd: metric.accountBilledUsd,
-      lastCompleteMinute: rows.reduce<Date | null>((latest, row) =>
-        latest === null || row.bucketStart > latest ? row.bucketStart : latest, null),
+      balanceUsd: balance == null ? null : String(balance),
+      lastCompleteMinute: latest?.bucketStart ?? null,
     };
   });
 }

@@ -6,6 +6,7 @@ import {
   ACCOUNT_PROJECTION_SQL,
   CAPABILITY_PROJECTION_SQL,
   ERROR_PROJECTION_SQL,
+  UPSTREAM_BALANCE_CREDENTIAL_PROJECTION_SQL,
   USAGE_PROJECTION_SQL,
   assertSchemaCapabilities,
   buildWindowParams,
@@ -36,6 +37,9 @@ test('readonly adapter selects only approved projections and never credential or
   assert.match(CAPABILITY_PROJECTION_SQL, /column_name = ANY\(ARRAY\['account_id','group_id'\]\)/);
   assert.match(CAPABILITY_PROJECTION_SQL, /column_name = ANY\(ARRAY\['id','name'\]\)/);
   assert.doesNotMatch(sql, /credentials|api_key|request_body|error_body|prompt/i);
+  assert.match(UPSTREAM_BALANCE_CREDENTIAL_PROJECTION_SQL, /source_account_id AS "sourceAccountId"/);
+  assert.match(UPSTREAM_BALANCE_CREDENTIAL_PROJECTION_SQL, /base_url AS "baseUrl"/);
+  assert.match(UPSTREAM_BALANCE_CREDENTIAL_PROJECTION_SQL, /api_key AS "apiKey"/);
 });
 
 test('deployment example declares the separate server-only source database URL', () => {
@@ -49,7 +53,7 @@ test('readonly adapter binds a UTC window and schema capability failures are exp
     from: '2026-07-25T00:00:00.000Z',
     to: '2026-07-25T01:00:00.000Z',
   });
-  assert.throws(() => assertSchemaCapabilities({ usageLogs: false, opsErrorLogs: true, accounts: true, accountGroups: true, groups: true }), /schema/i);
-  assert.throws(() => assertSchemaCapabilities({ usageLogs: true, opsErrorLogs: true, accounts: true, accountGroups: false, groups: true }), /schema/i);
-  assert.doesNotThrow(() => assertSchemaCapabilities({ usageLogs: true, opsErrorLogs: true, accounts: true, accountGroups: true, groups: true }));
+  assert.throws(() => assertSchemaCapabilities({ usageLogs: false, opsErrorLogs: true, accounts: true, accountGroups: true, groups: true, balanceCredentials: true }), /schema/i);
+  assert.throws(() => assertSchemaCapabilities({ usageLogs: true, opsErrorLogs: true, accounts: true, accountGroups: false, groups: true, balanceCredentials: true }), /schema/i);
+  assert.doesNotThrow(() => assertSchemaCapabilities({ usageLogs: true, opsErrorLogs: true, accounts: true, accountGroups: true, groups: true, balanceCredentials: true }));
 });

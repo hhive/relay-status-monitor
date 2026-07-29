@@ -35,6 +35,7 @@ export interface AccountMetricAggregateDto {
   promptTokens: string;
   userBilledUsd: string;
   accountBilledUsd: string;
+  balanceUsd?: string | null;
   errorStatusCounts: Record<string, number>;
   errorPhaseCounts: Record<string, number>;
 }
@@ -85,7 +86,7 @@ export interface AccountListItemDto {
   alertEnabled: boolean;
   metrics: Pick<AccountMetricAggregateDto,
     'eligibleCount' | 'availability' | 'errorRate' | 'durationP95Ms' | 'firstTokenP95Ms' |
-    'cacheHitRate' | 'userBilledUsd' | 'accountBilledUsd'>;
+    'cacheHitRate' | 'userBilledUsd' | 'accountBilledUsd'> & { balanceUsd: string | null };
 }
 
 export interface AccountListResponseDto {

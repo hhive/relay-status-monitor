@@ -63,6 +63,9 @@ function harness(input: {
   const dependencies: AccountAlertDependencies = {
     loadRules: async () => input.rules,
     loadAccounts: async () => [{ ...account, ...(input.account ?? {}) }],
+    loadBalanceHistory: async () => new Map(input.account?.balanceHistory
+      ? [[account.id, input.account.balanceHistory]]
+      : []),
     loadDisabledGroupIds: async () => input.disabledGroupIds ?? new Set(),
     loadLatestMetricBucket: async () => input.latestMetricBucketStart
       ?? account.metricMinutes.reduce<Date | null>((latest, item) => latest == null || item.bucketStart > latest ? item.bucketStart : latest, null),
@@ -90,7 +93,79 @@ function harness(input: {
 const minute = (overrides: Partial<AccountMetricMinuteRecord> = {}): AccountMetricMinuteRecord => ({
   bucketStart: new Date('2026-07-25T11:59:00Z'), successCount: 8, upstreamErrorCount: 2,
   eligibleCount: 10, durationHistogram: { '100': 9, '500': 1 }, firstTokenHistogram: { '20': 9, '200': 1 },
-  inputTokens: BigInt(100), cacheReadTokens: BigInt(20), cacheCreationTokens: BigInt(0), ...overrides,
+  inputTokens: BigInt(100), cacheReadTokens: BigInt(20), cacheCreationTokens: BigInt(0), balanceUsd: null, ...overrides,
+});
+
+test('balance alert is created only on a successful high-to-low crossing', async () => {
+  const balanceRule = rule({ metric: 'balance_low' as never, operator: 'lte', threshold: 5, minRequests: 0, cooldownMin: 60 });
+  const firstLow = harness({ rules: [balanceRule], minutes: [minute({ balanceUsd: '5' } as never)] });
+  await firstLow.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.equal(firstLow.created.length, 0);
+
+  const crossing = harness({ rules: [balanceRule], minutes: [
+    minute({ bucketStart: new Date('2026-07-25T11:58:00Z'), balanceUsd: '6' } as never),
+    minute({ bucketStart: new Date('2026-07-25T11:59:00Z'), balanceUsd: '5' } as never),
+  ], recentEvents: [{ id: 8, accountId: 9, ruleId: 1, metric: 'balance_low', message: 'old' }] });
+  await crossing.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.equal(crossing.created.length, 1, 'crossing alerts must not be lost to time cooldown');
+  assert.equal(crossing.created[0]?.metricValue, 5);
+});
+
+test('balance alert stays open while low, ignores null minutes, and recovers after three high values', async () => {
+  const balanceRule = rule({ metric: 'balance_low' as never, operator: 'lte', threshold: 5, minRequests: 0 });
+  const minutes = [
+    minute({ bucketStart: new Date('2026-07-25T11:57:00Z'), balanceUsd: '6' } as never),
+    minute({ bucketStart: new Date('2026-07-25T11:58:00Z'), balanceUsd: null } as never),
+    minute({ bucketStart: new Date('2026-07-25T11:59:00Z'), balanceUsd: '4' } as never),
+  ];
+  const run = harness({ rules: [balanceRule], minutes });
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.equal(run.created.length, 1);
+  minutes[2].bucketStart = new Date('2026-07-25T12:00:00Z');
+  await run.evaluate(new Date('2026-07-25T12:01:00Z'));
+  assert.equal(run.created.length, 1, 'sustained low balance must not create duplicates');
+  assert.equal(run.resolved.length, 0);
+
+  minutes[2].balanceUsd = null;
+  minutes[2].bucketStart = new Date('2026-07-25T12:01:00Z');
+  await run.evaluate(new Date('2026-07-25T12:02:00Z'));
+  assert.equal(run.resolved.length, 0, 'unavailable balance must not recover an event');
+
+  minutes[2].balanceUsd = '6';
+  minutes[2].bucketStart = new Date('2026-07-25T12:02:00Z');
+  await run.evaluate(new Date('2026-07-25T12:03:00Z'));
+  minutes[2].bucketStart = new Date('2026-07-25T12:03:00Z');
+  await run.evaluate(new Date('2026-07-25T12:04:00Z'));
+  assert.equal(run.resolved.length, 0);
+  minutes[2].bucketStart = new Date('2026-07-25T12:04:00Z');
+  await run.evaluate(new Date('2026-07-25T12:05:00Z'));
+  assert.equal(run.resolved.length, 1);
+});
+
+test('balance crossing keeps the previous successful baseline beyond the traffic window', async () => {
+  const balanceRule = rule({ metric: 'balance_low', operator: 'lte', threshold: 5, minRequests: 0 });
+  const run = harness({
+    rules: [balanceRule],
+    account: {
+      balanceHistory: [{ bucketStart: new Date('2026-07-25T10:00:00Z'), balanceUsd: '9' }],
+    },
+    minutes: [minute({ bucketStart: new Date('2026-07-25T11:59:00Z'), balanceUsd: '4' })],
+  });
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.equal(run.created.length, 1);
+});
+
+test('stale balance buckets are unavailable and never alert', async () => {
+  const balanceRule = rule({ metric: 'balance_low', operator: 'lte', threshold: 5, minRequests: 0 });
+  const run = harness({
+    rules: [balanceRule],
+    minutes: [
+      minute({ bucketStart: new Date('2026-07-25T11:57:00Z'), balanceUsd: '9' }),
+      minute({ bucketStart: new Date('2026-07-25T11:58:00Z'), balanceUsd: '4' }),
+    ],
+  });
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.equal(run.created.length, 0);
 });
 
 test('traffic alerts enforce request and prompt-token minimums', async () => {

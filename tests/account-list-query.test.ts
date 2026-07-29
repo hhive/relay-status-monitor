@@ -30,10 +30,10 @@ test('list query parser applies safe defaults and rejects invalid paging or sort
   assert.throws(() => buildAccountListPageQuery({ ...defaults, sort: { key: 'injected' as never, order: 'asc' } }, 1, 0), /invalid/i);
 });
 
-test('all thirteen sort keys use fixed SQL with NULLS LAST and deterministic account ties', () => {
+test('all fourteen sort keys use fixed SQL with NULLS LAST and deterministic account ties', () => {
   const input = parseAccountListQuery(new URLSearchParams('status=all'));
   const requestNow = new Date('2026-07-26T12:34:56.789Z');
-  assert.equal(ACCOUNT_SORT_KEYS.length, 13);
+  assert.equal(ACCOUNT_SORT_KEYS.length, 14);
   for (const key of ACCOUNT_SORT_KEYS) {
     for (const order of ['asc', 'desc'] as const) {
       const query = buildAccountListPageQuery({ ...input, sort: { key, order } }, 7, 0, requestNow);

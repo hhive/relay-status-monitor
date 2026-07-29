@@ -16,7 +16,7 @@ test('keeps the complete server sort whitelist and default', () => {
   assert.deepEqual(ACCOUNT_SORT_KEYS, [
     'account', 'platformGroup', 'schedulable', 'availability', 'errorRate',
     'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd',
-    'accountBilledUsd', 'eligibleCount', 'sync', 'alertEnabled',
+    'accountBilledUsd', 'balanceUsd', 'eligibleCount', 'sync', 'alertEnabled',
   ]);
   assert.deepEqual(Object.keys(ACCOUNT_SORT_LABELS), ACCOUNT_SORT_KEYS);
   assert.deepEqual(DEFAULT_ACCOUNT_SORT, { key: 'alertEnabled', order: 'desc' });
