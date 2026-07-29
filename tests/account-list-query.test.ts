@@ -119,9 +119,11 @@ test('account list runs batch, platform and group facets, count, and page in one
       return [{
         id: 9, name: 'New account', platform: 'openai', type: null, remoteStatus: null,
         schedulable: true, syncState: 'ACTIVE', groupProjection: [], lastSyncedAt: null,
-        alertEnabled: true, snapshotId: null, eligibleCount: null, availability: null, errorRate: null,
+        alertEnabled: true, snapshotId: 77, eligibleCount: null, availability: null, errorRate: null,
         durationP95Ms: null, firstTokenP95Ms: null, cacheHitRate: null,
-        userBilledUsd: null, accountBilledUsd: null, lastCompleteMinute: null,
+        userBilledUsd: null, accountBilledUsd: null, balanceUsd: null,
+        upstreamRateMultiplier: '1.25000000', upstreamRateSource: 'estimated',
+        lastCompleteMinute: new Date('2026-07-26T11:59:00Z'),
       }];
     },
   };
@@ -152,7 +154,9 @@ test('account list runs batch, platform and group facets, count, and page in one
   assert.equal(result.accounts[0].metrics.userBilledUsd, '0.000000');
   assert.equal(result.accounts[0].metrics.accountBilledUsd, '0.000000');
   assert.equal(result.accounts[0].metrics.availability, null);
-  assert.equal(result.accounts[0].lastCompleteMinute, null);
+  assert.equal(result.accounts[0].metrics.upstreamRateMultiplier, '1.25000000');
+  assert.equal(result.accounts[0].metrics.upstreamRateSource, 'estimated');
+  assert.equal(result.accounts[0].lastCompleteMinute, '2026-07-26T11:59:00.000Z');
   assert.deepEqual(result.snapshot, {
     computedAt: '2026-07-26T12:00:05.000Z',
     lastCompleteMinute: '2026-07-26T11:59:00.000Z',

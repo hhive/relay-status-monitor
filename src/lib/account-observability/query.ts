@@ -44,6 +44,9 @@ interface MetricRow {
   cacheCreationTokens: bigint;
   userBilledUsd: unknown;
   accountBilledUsd: unknown;
+  balanceUsd?: unknown;
+  upstreamRateMultiplier?: unknown;
+  upstreamRateSource?: string | null;
   errorStatusCounts?: unknown;
   errorPhaseCounts?: unknown;
 }
@@ -177,6 +180,7 @@ export function buildAccountOverview(input: {
     trend,
     accounts: accounts.map((account) => {
       const accountMinutes = minutesByAccount.get(account.id) ?? [];
+      const latest = accountMinutes.at(-1);
       return {
         id: account.id,
         sourceAccountId: account.sourceAccountId,
@@ -191,6 +195,12 @@ export function buildAccountOverview(input: {
         alertEnabled: account.alertEnabled ?? true,
         lastCompleteMinute: accountMinutes.at(-1)?.bucketStart ?? null,
         billingProbe: billingProbe(account),
+        upstream: {
+          balanceUsd: latest?.balanceUsd == null ? null : String(latest.balanceUsd),
+          rateMultiplier: latest?.upstreamRateMultiplier == null ? null : String(latest.upstreamRateMultiplier),
+          upstreamRateSource: latest?.upstreamRateSource ?? null,
+          collectedAt: latest?.bucketStart ?? null,
+        },
         metrics: aggregateMetricMinutes(accountMinutes),
         metrics24h: aggregateMetricMinutes(accountMinutes),
       };

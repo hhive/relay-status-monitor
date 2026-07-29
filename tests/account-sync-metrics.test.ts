@@ -32,6 +32,7 @@ test('minute aggregation attributes provider errors per account and deduplicates
   assert.equal(result.eligibleCount, 4);
   assert.equal(result.userBilledMicroUsd, BigInt(300000));
   assert.equal(result.accountBilledMicroUsd, BigInt(410000));
+  assert.equal(result.baseBilledMicroUsd, BigInt(330000));
   assert.equal(result.cacheReadTokens, 5);
   assert.equal(result.durationHistogram['100'], 1);
   assert.equal(result.firstTokenHistogram['25'], 1);
@@ -49,4 +50,5 @@ test('minute billing aggregation keeps Decimal precision above Number safe integ
   });
   assert.equal(result.userBilledMicroUsd, BigInt('9007199254740991'));
   assert.equal(result.accountBilledMicroUsd, BigInt('9007199254740991'));
+  assert.equal(result.baseBilledMicroUsd, BigInt('9007199254740991'));
 });

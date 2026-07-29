@@ -23,6 +23,8 @@ export interface AccountMetricSnapshotWrite {
   userBilledUsd: string;
   accountBilledUsd: string;
   balanceUsd: string | null;
+  upstreamRateMultiplier: string | null;
+  upstreamRateSource: string | null;
   lastCompleteMinute: Date | null;
 }
 
@@ -41,10 +43,10 @@ export type SnapshotClient = Pick<typeof prisma,
 
 export function buildSnapshotRows(input: {
   accounts: Array<{ id: number }>;
-  minutes: Array<MetricMinuteAggregateInput & { accountId: number; balanceUsd?: unknown }>;
+  minutes: Array<MetricMinuteAggregateInput & { accountId: number; balanceUsd?: unknown; upstreamRateMultiplier?: unknown; upstreamRateSource?: string | null }>;
   window: AccountWindow;
 }): AccountMetricSnapshotWrite[] {
-  const rowsByAccount = new Map<number, Array<MetricMinuteAggregateInput & { balanceUsd?: unknown }>>();
+  const rowsByAccount = new Map<number, Array<MetricMinuteAggregateInput & { balanceUsd?: unknown; upstreamRateMultiplier?: unknown; upstreamRateSource?: string | null }>>();
   for (const row of input.minutes) {
     if (row.bucketStart < input.window.start || row.bucketStart >= input.window.end) continue;
     const rows = rowsByAccount.get(row.accountId) ?? [];
@@ -70,6 +72,8 @@ export function buildSnapshotRows(input: {
       userBilledUsd: metric.userBilledUsd,
       accountBilledUsd: metric.accountBilledUsd,
       balanceUsd: balance == null ? null : String(balance),
+      upstreamRateMultiplier: latest?.upstreamRateMultiplier == null ? null : String(latest.upstreamRateMultiplier),
+      upstreamRateSource: latest?.upstreamRateSource ?? null,
       lastCompleteMinute: latest?.bucketStart ?? null,
     };
   });

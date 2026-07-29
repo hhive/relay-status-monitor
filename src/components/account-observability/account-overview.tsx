@@ -69,7 +69,7 @@ const TREND_VIEWS: Record<'quality' | 'latency' | 'billing', { label: string; se
 };
 
 const SUMMARY_METRICS: AccountAggregateMetricKey[] = ['eligibleCount', 'availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd'];
-const ACCOUNT_LIST_METRICS = ['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'balanceUsd', 'eligibleCount'] as const;
+const ACCOUNT_LIST_METRICS = ['availability', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd', 'accountBilledUsd', 'balanceUsd', 'upstreamRateMultiplier', 'eligibleCount'] as const;
 
 export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   const [overview, setOverview] = useState<AccountOverviewResponseDto | null>(null);
@@ -327,6 +327,7 @@ function SummaryGrid({ data }: { data: AccountOverviewResponseDto }) {
   const values: Record<AccountMetricKey, number | string | null> = {
     ...data.summary,
     balanceUsd: data.summary.balanceUsd ?? null,
+    upstreamRateMultiplier: null,
     selectedAccountCount: data.summary.selectedAccountCount,
     openAlertCount: data.openAlertCount,
   };
@@ -392,13 +393,13 @@ function AccountList({ data, accounts, coverage, pageSize, onPageSizeChange, onP
           <SortableAccountHeader sortKey="platformGroup" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="schedulable" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="availability" metric="availability" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
-          <SortableAccountHeader sortKey="errorRate" metric="errorRate" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="durationP95Ms" metric="durationP95Ms" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="firstTokenP95Ms" metric="firstTokenP95Ms" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="cacheHitRate" metric="cacheHitRate" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="userBilledUsd" metric="userBilledUsd" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="accountBilledUsd" metric="accountBilledUsd" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="balanceUsd" metric="balanceUsd" state={sortState} onSort={onSort} window={data.window} coverage={coverage} title="上游余额" />
+          <SortableAccountHeader sortKey="upstreamRateMultiplier" metric="upstreamRateMultiplier" state={sortState} onSort={onSort} window={data.window} coverage={coverage} title="上游倍率" />
           <SortableAccountHeader sortKey="eligibleCount" metric="eligibleCount" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="sync" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="alertEnabled" state={sortState} onSort={onSort} />
@@ -427,7 +428,7 @@ function AccountList({ data, accounts, coverage, pageSize, onPageSizeChange, onP
   </>;
 }
 
-function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverage, title }: { sortKey: AccountSortKey; metric?: AccountAggregateMetricKey; state: AccountSortState; onSort: (key: AccountSortKey) => void; window?: AccountWindowDto; coverage?: AccountCoverageDto; title?: string }) {
+function SortableAccountHeader({ sortKey, metric, state, onSort, window, coverage, title }: { sortKey: AccountSortKey; metric?: AccountMetricKey; state: AccountSortState; onSort: (key: AccountSortKey) => void; window?: AccountWindowDto; coverage?: AccountCoverageDto; title?: string }) {
   const active = state.key === sortKey;
   const SortIcon = active ? state.order === 'asc' ? ArrowUp : ArrowDown : ArrowUpDown;
   const label = ACCOUNT_SORT_LABELS[sortKey];
@@ -447,7 +448,7 @@ function AccountTableRow({ account, pending, onToggleAlert }: { account: Account
     <td className="px-3 py-3"><Link href={`/accounts/${account.id}`} className="font-medium text-primary hover:underline">{account.name}</Link><div className="text-xs text-muted-foreground">{account.type ?? '未知类型'}</div></td>
     <td className="max-w-56 px-3 py-3"><div>{account.platform ?? '未知平台'}</div><div className="truncate text-xs text-muted-foreground">{formatAccountGroups(account.groupProjection)}</div></td>
     <td className="px-3 py-3"><Badge variant={account.schedulable ? 'outline' : 'destructive'}>{account.schedulable ? '可调度' : '不可调度'}</Badge></td>
-    {ACCOUNT_LIST_METRICS.map((key) => <td key={key} className="whitespace-nowrap px-3 py-3 tabular-nums">{formatAccountMetric(key, metrics[key])}</td>)}
+    {ACCOUNT_LIST_METRICS.map((key) => <td key={key} className="whitespace-nowrap px-3 py-3 tabular-nums">{formatAccountMetric(key, metrics[key])}{key === 'upstreamRateMultiplier' && metrics.upstreamRateSource ? <span className="ml-1 text-xs text-muted-foreground">· {metrics.upstreamRateSource === 'api' ? '接口' : '估算'}</span> : null}</td>)}
     <td className="px-3 py-3">{accountDataIsStale(account) ? <Badge variant="destructive">数据同步延迟</Badge> : <span className="whitespace-nowrap text-xs text-muted-foreground">{formatBeijing(account.lastSyncedAt)}</span>}</td>
     <td className="px-3 py-3"><Switch checked={account.alertEnabled} disabled={pending} onCheckedChange={(value) => onToggleAlert(account.id, account.alertEnabled, value)} aria-label={`账号 ${account.name} 告警开关`} /></td>
   </tr>;
@@ -456,7 +457,7 @@ function AccountTableRow({ account, pending, onToggleAlert }: { account: Account
 function AccountMobileRow({ account, window, coverage, pending, onToggleAlert }: { account: AccountListItemDto; window: AccountWindowDto; coverage?: AccountCoverageDto; pending: boolean; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
   return <article className="rounded-md border bg-card p-3">
     <div className="flex min-w-0 items-start justify-between gap-2"><div className="min-w-0"><Link href={`/accounts/${account.id}`} className="block truncate font-medium text-primary">{account.name}</Link><p className="truncate text-xs text-muted-foreground">{account.platform ?? '未知平台'} · {formatAccountGroups(account.groupProjection)}</p></div><Badge variant={account.schedulable ? 'outline' : 'destructive'} className="shrink-0">{account.schedulable ? '可调度' : '不可调度'}</Badge></div>
-    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">{ACCOUNT_LIST_METRICS.filter((key) => key !== 'eligibleCount').map((key) => <div key={key} className="min-w-0"><dt><MetricDefinitionTooltip metric={key} compact window={window} coverage={coverage} /></dt><dd className="truncate font-medium tabular-nums">{formatAccountMetric(key, account.metrics[key])}</dd></div>)}</dl>
+    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">{ACCOUNT_LIST_METRICS.filter((key) => key !== 'eligibleCount').map((key) => <div key={key} className="min-w-0"><dt><MetricDefinitionTooltip metric={key} compact window={window} coverage={coverage} /></dt><dd className="truncate font-medium tabular-nums">{formatAccountMetric(key, account.metrics[key])}{key === 'upstreamRateMultiplier' && account.metrics.upstreamRateSource ? ` · ${account.metrics.upstreamRateSource === 'api' ? '接口' : '估算'}` : ''}</dd></div>)}</dl>
     <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
       <span>{accountDataIsStale(account) ? <span className="text-destructive">数据同步延迟</span> : `同步 ${formatBeijing(account.lastSyncedAt)}`}</span>
       <label className="flex items-center gap-2"><span>告警</span><Switch checked={account.alertEnabled} disabled={pending} onCheckedChange={(value) => onToggleAlert(account.id, account.alertEnabled, value)} aria-label={`账号 ${account.name} 告警开关`} /></label>

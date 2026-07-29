@@ -135,6 +135,8 @@ model AccountMetricSnapshot {
   userBilledUsd      Decimal                    @default(0) @db.Decimal(24, 6)
   accountBilledUsd   Decimal                    @default(0) @db.Decimal(24, 6)
   balanceUsd         Decimal?                   @db.Decimal(24, 6)
+  upstreamRateMultiplier Decimal?               @db.Decimal(20, 8)
+  upstreamRateSource String?                     @db.VarChar(16)
   lastCompleteMinute DateTime?
 
   @@unique([batchId, accountId])
@@ -159,7 +161,12 @@ model AccountMetricMinute {
   cacheCreationTokens   BigInt          @default(0)
   userBilledUsd         Decimal         @default(0) @db.Decimal(24, 6)
   accountBilledUsd      Decimal         @default(0) @db.Decimal(24, 6)
+  baseBilledUsd         Decimal         @default(0) @db.Decimal(24, 6)
   balanceUsd            Decimal?        @db.Decimal(24, 6)
+  upstreamKeyUsedUsd    Decimal?        @db.Decimal(24, 6)
+  upstreamKeyStandardUsd Decimal?       @db.Decimal(24, 6)
+  upstreamRateMultiplier Decimal?       @db.Decimal(20, 8)
+  upstreamRateSource    String?         @db.VarChar(16)
   errorStatusCounts     Json?
   errorPhaseCounts      Json?
   sourceMaxUsageId      String?

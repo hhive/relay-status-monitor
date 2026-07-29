@@ -69,6 +69,12 @@ export interface AccountSummaryDto {
   lastCompleteMinute: string | null;
   alertEnabled: boolean;
   billingProbe: AccountBillingProbeDto;
+  upstream: {
+    balanceUsd: string | null;
+    rateMultiplier: string | null;
+    upstreamRateSource: string | null;
+    collectedAt: string | null;
+  };
   metrics: AccountMetricAggregateDto;
 }
 
@@ -86,7 +92,11 @@ export interface AccountListItemDto {
   alertEnabled: boolean;
   metrics: Pick<AccountMetricAggregateDto,
     'eligibleCount' | 'availability' | 'errorRate' | 'durationP95Ms' | 'firstTokenP95Ms' |
-    'cacheHitRate' | 'userBilledUsd' | 'accountBilledUsd'> & { balanceUsd: string | null };
+    'cacheHitRate' | 'userBilledUsd' | 'accountBilledUsd'> & {
+      balanceUsd: string | null;
+      upstreamRateMultiplier: string | null;
+      upstreamRateSource: string | null;
+    };
 }
 
 export interface AccountListResponseDto {

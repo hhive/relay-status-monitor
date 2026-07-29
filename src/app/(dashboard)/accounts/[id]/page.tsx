@@ -227,6 +227,16 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
       <label className="flex items-center gap-2 text-sm"><Switch checked={masterAlertEnabled} disabled={masterAlertPending} onCheckedChange={(value) => void toggleMasterAlert(value)} aria-label="账号告警总开关" />{masterAlertEnabled ? '告警已开启' : '告警已关闭'}</label>
     </section>
 
+    <section className="space-y-3 border-y py-4" aria-labelledby="upstream-billing-heading">
+      <h2 id="upstream-billing-heading" className="text-sm font-semibold">上游计费状态</h2>
+      <dl className="grid gap-3 text-sm sm:grid-cols-3">
+        <div><dt className="text-xs text-muted-foreground">上游余额</dt><dd className="mt-1 font-medium tabular-nums">{formatAccountMetric('balanceUsd', data.upstream.balanceUsd)}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">上游倍率</dt><dd className="mt-1 font-medium tabular-nums">{formatAccountMetric('upstreamRateMultiplier', data.upstream.rateMultiplier)}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">倍率来源</dt><dd className="mt-1 font-medium">{data.upstream.upstreamRateSource === 'api' ? '上游接口' : data.upstream.upstreamRateSource === 'estimated' ? '余额消耗估算' : '暂无数据'}</dd></div>
+      </dl>
+      <p className="text-xs text-muted-foreground">采集分钟：{formatBeijing(data.upstream.collectedAt)}</p>
+    </section>
+
     <section className="space-y-3 border-y py-4" aria-labelledby="balance-credential-heading">
       <div className="flex flex-col gap-1">
         <h2 id="balance-credential-heading" className="text-sm font-semibold">上游余额接口</h2>

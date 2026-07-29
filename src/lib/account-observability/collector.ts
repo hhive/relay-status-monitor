@@ -33,6 +33,7 @@ export interface MetricMinuteWrite {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   userBilledMicroUsd: bigint;
+  baseBilledMicroUsd: bigint;
   accountBilledMicroUsd: bigint;
   errorStatusCounts: Record<string, number>;
   errorPhaseCounts: Record<string, number>;
@@ -194,7 +195,7 @@ function productionMetricRunner(
       startedAtByRun.delete(id);
     },
     upsertMinute: async (row) => {
-      const data = { successCount: row.successCount, upstreamErrorCount: row.upstreamErrorCount, eligibleCount: row.eligibleCount, durationCount: row.durationCount, durationSumMs: BigInt(row.durationSumMs), durationHistogram: row.durationHistogram, firstTokenHistogram: row.firstTokenHistogram, inputTokens: BigInt(row.inputTokens), cacheReadTokens: BigInt(row.cacheReadTokens), cacheCreationTokens: BigInt(row.cacheCreationTokens), userBilledUsd: microUsdToDecimal(row.userBilledMicroUsd), accountBilledUsd: microUsdToDecimal(row.accountBilledMicroUsd), errorStatusCounts: row.errorStatusCounts, errorPhaseCounts: row.errorPhaseCounts, sourceMaxUsageId: row.sourceMaxUsageId, sourceMaxErrorId: row.sourceMaxErrorId };
+      const data = { successCount: row.successCount, upstreamErrorCount: row.upstreamErrorCount, eligibleCount: row.eligibleCount, durationCount: row.durationCount, durationSumMs: BigInt(row.durationSumMs), durationHistogram: row.durationHistogram, firstTokenHistogram: row.firstTokenHistogram, inputTokens: BigInt(row.inputTokens), cacheReadTokens: BigInt(row.cacheReadTokens), cacheCreationTokens: BigInt(row.cacheCreationTokens), userBilledUsd: microUsdToDecimal(row.userBilledMicroUsd), baseBilledUsd: microUsdToDecimal(row.baseBilledMicroUsd), accountBilledUsd: microUsdToDecimal(row.accountBilledMicroUsd), errorStatusCounts: row.errorStatusCounts, errorPhaseCounts: row.errorPhaseCounts, sourceMaxUsageId: row.sourceMaxUsageId, sourceMaxErrorId: row.sourceMaxErrorId };
       await prisma.accountMetricMinute.upsert({ where: { accountId_bucketStart: { accountId: row.accountId, bucketStart: row.bucketStart } }, create: { accountId: row.accountId, bucketStart: row.bucketStart, ...data }, update: data });
     },
   });

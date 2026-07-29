@@ -45,6 +45,8 @@ interface AccountListRawRow {
   userBilledUsd: unknown;
   accountBilledUsd: unknown;
   balanceUsd: unknown;
+  upstreamRateMultiplier: unknown;
+  upstreamRateSource: string | null;
   lastCompleteMinute: Date | null;
 }
 
@@ -165,13 +167,13 @@ function fixedSortExpression(key: AccountSortKey, requestNow: Date): Prisma.Sql[
     case 'platformGroup': return [Prisma.sql`LOWER(a."platform")`, Prisma.sql`LOWER(a.group_sort_text)`];
     case 'schedulable': return [Prisma.sql`a."schedulable"`];
     case 'availability': return [Prisma.sql`s."availability"`];
-    case 'errorRate': return [Prisma.sql`s."errorRate"`];
     case 'durationP95Ms': return [Prisma.sql`s."durationP95Ms"`];
     case 'firstTokenP95Ms': return [Prisma.sql`s."firstTokenP95Ms"`];
     case 'cacheHitRate': return [Prisma.sql`s."cacheHitRate"`];
     case 'userBilledUsd': return [Prisma.sql`s."userBilledUsd"`];
     case 'accountBilledUsd': return [Prisma.sql`s."accountBilledUsd"`];
     case 'balanceUsd': return [Prisma.sql`s."balanceUsd"`];
+    case 'upstreamRateMultiplier': return [Prisma.sql`s."upstreamRateMultiplier"`];
     case 'eligibleCount': return [Prisma.sql`s."eligibleCount"`];
     case 'sync': return [Prisma.sql`CASE
       WHEN a."lastSyncedAt" IS NULL OR s."lastCompleteMinute" IS NULL THEN NULL
@@ -189,8 +191,8 @@ function orderBySql(key: AccountSortKey, order: AccountSortOrder, requestNow: Da
   }
   const direction = order === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
   const expressions = fixedSortExpression(key, requestNow);
-  const snapshotMetric = ['availability', 'errorRate', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate',
-    'userBilledUsd', 'accountBilledUsd', 'balanceUsd', 'eligibleCount'].includes(key);
+  const snapshotMetric = ['availability', 'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate',
+    'userBilledUsd', 'accountBilledUsd', 'balanceUsd', 'upstreamRateMultiplier', 'eligibleCount'].includes(key);
   const parts = expressions.map((expression) => Prisma.sql`${expression} ${direction} NULLS LAST`);
   return Prisma.join([
     ...(snapshotMetric ? [Prisma.sql`CASE WHEN s."id" IS NULL THEN 1 ELSE 0 END ASC`] : []),
@@ -256,7 +258,8 @@ export function buildAccountListPageQuery(
       a."syncState", a."groupProjection", a."lastSyncedAt", a."alertEnabled",
       s."id" AS "snapshotId", s."eligibleCount", s."availability", s."errorRate",
       s."durationP95Ms", s."firstTokenP95Ms", s."cacheHitRate", s."userBilledUsd",
-      s."accountBilledUsd", s."balanceUsd", s."lastCompleteMinute"
+      s."accountBilledUsd", s."balanceUsd", s."upstreamRateMultiplier", s."upstreamRateSource",
+      s."lastCompleteMinute"
     FROM account_text a
     LEFT JOIN "AccountMetricSnapshot" s ON s."accountId" = a."id" AND s."batchId" = ${batchId}
     WHERE ${where}
@@ -299,6 +302,9 @@ function listItem(row: AccountListRawRow): AccountListItemDto {
       userBilledUsd: decimalString(hasSnapshot ? row.userBilledUsd : null, '0.000000'),
       accountBilledUsd: decimalString(hasSnapshot ? row.accountBilledUsd : null, '0.000000'),
       balanceUsd: hasSnapshot && row.balanceUsd != null ? decimalString(row.balanceUsd, '') : null,
+      upstreamRateMultiplier: hasSnapshot && row.upstreamRateMultiplier != null
+        ? decimalString(row.upstreamRateMultiplier, '') : null,
+      upstreamRateSource: hasSnapshot ? row.upstreamRateSource : null,
     },
   };
 }

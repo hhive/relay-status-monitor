@@ -94,6 +94,8 @@ test('snapshot rows include accounts without minute data', () => {
     userBilledUsd: '0.000000',
     accountBilledUsd: '0.000000',
     balanceUsd: null,
+    upstreamRateMultiplier: null,
+    upstreamRateSource: null,
     lastCompleteMinute: null,
   });
 });
@@ -110,6 +112,20 @@ test('snapshot balance uses the last minute and never fills a current null from 
   });
   assert.equal(rows[0].balanceUsd, null);
   assert.equal(rows[0].lastCompleteMinute?.toISOString(), '2026-07-25T12:33:00.000Z');
+});
+
+test('snapshot uses the latest minute upstream rate and source without historical fill', () => {
+  const window = resolveAccountWindow('last1h', new Date('2026-07-25T12:34:56Z'));
+  const rows = buildSnapshotRows({
+    accounts: [{ id: 1 }],
+    minutes: [
+      minute(1, '2026-07-25T12:32:00Z', { upstreamRateMultiplier: '1.5', upstreamRateSource: 'api' }),
+      minute(1, '2026-07-25T12:33:00Z', { upstreamRateMultiplier: null, upstreamRateSource: null }),
+    ],
+    window,
+  });
+  assert.equal(rows[0].upstreamRateMultiplier, null);
+  assert.equal(rows[0].upstreamRateSource, null);
 });
 
 test('refresh reads every account once and all windows share one complete minute', async () => {

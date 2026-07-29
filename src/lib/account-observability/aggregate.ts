@@ -42,6 +42,7 @@ export interface MinuteAggregate {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   userBilledMicroUsd: bigint;
+  baseBilledMicroUsd: bigint;
   accountBilledMicroUsd: bigint;
   errorStatusCounts: Record<string, number>;
   errorPhaseCounts: Record<string, number>;
@@ -71,6 +72,7 @@ export function aggregateMinute(input: { usages: UsageEvent[]; errors: ErrorEven
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
     userBilledMicroUsd: BigInt(0),
+    baseBilledMicroUsd: BigInt(0),
     accountBilledMicroUsd: BigInt(0),
     errorStatusCounts: {},
     errorPhaseCounts: {},
@@ -88,6 +90,7 @@ export function aggregateMinute(input: { usages: UsageEvent[]; errors: ErrorEven
     result.cacheReadTokens += usage.cacheReadTokens;
     result.cacheCreationTokens += usage.cacheCreationTokens;
     result.userBilledMicroUsd += decimalToMicroUsd(usage.actualCost);
+    result.baseBilledMicroUsd += decimalToMicroUsd(usage.accountStatsCost ?? usage.totalCost);
     result.accountBilledMicroUsd += snapshotBillingMicroUsdExact({
       accountStatsCost: usage.accountStatsCost,
       totalCost: usage.totalCost,

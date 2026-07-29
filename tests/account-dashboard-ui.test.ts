@@ -19,6 +19,7 @@ test('metric definitions are centralized and preserve no-data versus zero-cost s
   assert.equal(definitions.formatAccountMetric('userBilledUsd', '0'), '$0.00');
   assert.equal(definitions.formatAccountMetric('balanceUsd', '-0.25'), '$-0.25');
   assert.equal(definitions.formatAccountMetric('balanceUsd', null), '暂无数据');
+  assert.equal(definitions.formatAccountMetric('upstreamRateMultiplier', '1.25'), '1.25x');
   assert.equal(definitions.formatAccountMetric('durationP95Ms', 1234.6), '1,235 ms');
   assert.match(definitions.ACCOUNT_METRIC_DEFINITIONS.cacheHitRate.formula, /cacheReadTokens/);
   assert.match(definitions.ACCOUNT_METRIC_DEFINITIONS.accountBilledUsd.formula, /rate_multiplier/i);
@@ -44,6 +45,8 @@ test('root overview and account list split server-authoritative overview and lis
   assert.match(shared, /const SUMMARY_METRICS[^\n]*'firstTokenP95Ms'/);
   assert.match(shared, /const TREND_VIEWS[\s\S]*?'firstTokenP95Ms'/);
   assert.match(shared, /const ACCOUNT_LIST_METRICS[^\n]*'firstTokenP95Ms'/);
+  assert.match(shared, /const ACCOUNT_LIST_METRICS[^\n]*'upstreamRateMultiplier'/);
+  assert.doesNotMatch(shared.match(/const ACCOUNT_LIST_METRICS[^\n]*/)?.[0] ?? '', /'errorRate'/);
 
   const tableRow = shared.match(/function AccountTableRow[\s\S]*?\n\}/)?.[0] ?? '';
   const mobileRow = shared.match(/function AccountMobileRow[\s\S]*?\n\}/)?.[0] ?? '';
@@ -105,6 +108,8 @@ test('account list exposes persisted sorting on desktop and mobile', async () =>
   assert.match(shared, /className="size-10"/);
   assert.match(tooltip, /iconOnly\??:/);
   for (const key of sort.ACCOUNT_SORT_KEYS) assert.match(shared, new RegExp(`sortKey=['"]${key}['"]`));
+  assert.equal((sort.ACCOUNT_SORT_KEYS as readonly string[]).includes('errorRate'), false);
+  assert.equal(sort.ACCOUNT_SORT_KEYS.includes('upstreamRateMultiplier'), true);
 });
 
 test('account detail requests each selected window and exposes five trend views plus minute details', () => {
@@ -118,6 +123,9 @@ test('account detail requests each selected window and exposes five trend views 
   assert.match(detail, /<details/);
   assert.match(detail, /数据不完整/);
   assert.match(detail, /promptTokens/);
+  assert.match(detail, /上游余额/);
+  assert.match(detail, /上游倍率/);
+  assert.match(detail, /upstreamRateSource/);
 });
 
 test('notification channel save reports API failures and successful creation', () => {

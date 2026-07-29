@@ -6,13 +6,13 @@ export const ACCOUNT_SORT_KEYS = [
   'platformGroup',
   'schedulable',
   'availability',
-  'errorRate',
   'durationP95Ms',
   'firstTokenP95Ms',
   'cacheHitRate',
   'userBilledUsd',
   'accountBilledUsd',
   'balanceUsd',
+  'upstreamRateMultiplier',
   'eligibleCount',
   'sync',
   'alertEnabled',
@@ -31,13 +31,13 @@ export const ACCOUNT_SORT_LABELS: Record<AccountSortKey, string> = {
   platformGroup: '平台 / 分组',
   schedulable: '调度',
   availability: '可用率',
-  errorRate: '错误率',
   durationP95Ms: '总延迟 P95',
   firstTokenP95Ms: '首 Token P95',
   cacheHitRate: '缓存命中率',
   userBilledUsd: '用户计费',
   accountBilledUsd: '账号计费',
   balanceUsd: '上游余额',
+  upstreamRateMultiplier: '上游倍率',
   eligibleCount: '有效请求',
   sync: '同步',
   alertEnabled: '告警',
@@ -179,6 +179,11 @@ function comparePrimary(left: SortableAccount, right: SortableAccount, state: Ac
   }
   if (key === 'userBilledUsd' || key === 'accountBilledUsd' || key === 'balanceUsd') {
     return compareNullable(left.metrics[key], right.metrics[key], compareDecimals, order);
+  }
+  if (key === 'upstreamRateMultiplier') {
+    const leftValue = 'upstream' in left ? left.upstream.rateMultiplier : left.metrics.upstreamRateMultiplier;
+    const rightValue = 'upstream' in right ? right.upstream.rateMultiplier : right.metrics.upstreamRateMultiplier;
+    return compareNullable(leftValue, rightValue, compareDecimals, order);
   }
   return compareNullable(finiteNumber(left.metrics[key]), finiteNumber(right.metrics[key]), compareNumber, order);
 }

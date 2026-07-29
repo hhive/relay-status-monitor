@@ -6,8 +6,11 @@ import {
 } from './sub2api-readonly';
 import { openNewApiAccessToken } from './balance-credential-config';
 import {
-  queryConfiguredUpstreamBalance,
+  estimateUpstreamRateMultiplier,
+  queryConfiguredUpstreamUsageSnapshot,
+  queryUpstreamRateMultiplier,
   type ConfiguredUpstreamBalanceCredential,
+  type UpstreamUsageSnapshot,
 } from './upstream-balance';
 
 export interface BalanceCredential extends ConfiguredUpstreamBalanceCredential {
@@ -22,12 +25,18 @@ interface ActiveAccount {
 interface BalanceMinuteWrite {
   accountId: number;
   balanceUsd: number | null;
+  upstreamKeyUsedUsd: number | null;
+  upstreamKeyStandardUsd: number | null;
+  upstreamRateMultiplier: number | null;
+  upstreamRateSource: 'api' | 'estimated' | null;
 }
 
 export interface BalanceCollectorDependencies {
   loadActiveAccounts: () => Promise<ActiveAccount[]>;
   loadCredentials: () => Promise<BalanceCredential[]>;
-  probe: (credential: BalanceCredential) => Promise<number | null>;
+  probe: (credential: BalanceCredential) => Promise<UpstreamUsageSnapshot | null>;
+  rateProbe?: (credential: BalanceCredential) => Promise<number | null>;
+  estimateRate?: (accountId: number, bucketStart: Date, snapshot: UpstreamUsageSnapshot) => Promise<number | null>;
   write: (bucketStart: Date, rows: BalanceMinuteWrite[]) => Promise<void>;
   concurrency?: number;
 }
@@ -38,7 +47,14 @@ export async function collectBalanceMinute(now: Date, dependencies: BalanceColle
     dependencies.loadCredentials(),
   ]);
   const credentialsBySourceId = new Map(credentials.map((item) => [item.sourceAccountId, item]));
-  const rows = accounts.map((account) => ({ accountId: account.id, balanceUsd: null as number | null }));
+  const rows: BalanceMinuteWrite[] = accounts.map((account) => ({
+    accountId: account.id,
+    balanceUsd: null,
+    upstreamKeyUsedUsd: null,
+    upstreamKeyStandardUsd: null,
+    upstreamRateMultiplier: null,
+    upstreamRateSource: null,
+  }));
   const tasks = accounts.flatMap((account, index) => {
     const credential = credentialsBySourceId.get(account.sourceAccountId);
     return credential ? [{ credential, index }] : [];
@@ -48,8 +64,17 @@ export async function collectBalanceMinute(now: Date, dependencies: BalanceColle
     while (cursor < tasks.length) {
       const task = tasks[cursor++];
       try {
-        const value = await dependencies.probe(task.credential);
-        rows[task.index].balanceUsd = value != null && Number.isFinite(value) ? value : null;
+        const [snapshot, directRate] = await Promise.all([
+          dependencies.probe(task.credential).catch(() => null),
+          dependencies.rateProbe?.(task.credential).catch(() => null) ?? Promise.resolve(null),
+        ]);
+        rows[task.index].balanceUsd = snapshot?.balanceUsd != null && Number.isFinite(snapshot.balanceUsd) ? snapshot.balanceUsd : null;
+        rows[task.index].upstreamKeyUsedUsd = snapshot?.keyUsedUsd != null && Number.isFinite(snapshot.keyUsedUsd) ? snapshot.keyUsedUsd : null;
+        rows[task.index].upstreamKeyStandardUsd = snapshot?.keyStandardUsd != null && Number.isFinite(snapshot.keyStandardUsd) ? snapshot.keyStandardUsd : null;
+        if (directRate != null && Number.isFinite(directRate)) {
+          rows[task.index].upstreamRateMultiplier = directRate;
+          rows[task.index].upstreamRateSource = 'api';
+        }
       } catch {
         rows[task.index].balanceUsd = null;
       }
@@ -57,6 +82,20 @@ export async function collectBalanceMinute(now: Date, dependencies: BalanceColle
   });
   await Promise.all(workers);
   const bucketStart = new Date(minuteBucket(now).getTime() - 60_000);
+  if (dependencies.estimateRate) {
+    await Promise.all(rows.map(async (row) => {
+      if (row.upstreamRateMultiplier != null || row.upstreamKeyUsedUsd == null) return;
+      const estimated = await dependencies.estimateRate!(row.accountId, bucketStart, {
+        balanceUsd: row.balanceUsd,
+        keyUsedUsd: row.upstreamKeyUsedUsd,
+        keyStandardUsd: row.upstreamKeyStandardUsd,
+      }).catch(() => null);
+      if (estimated != null && Number.isFinite(estimated)) {
+        row.upstreamRateMultiplier = estimated;
+        row.upstreamRateSource = 'estimated';
+      }
+    }));
+  }
   await dependencies.write(bucketStart, rows);
   const succeeded = rows.filter((row) => row.balanceUsd != null).length;
   return { attempted: tasks.length, succeeded, unavailable: rows.length - succeeded };
@@ -93,14 +132,46 @@ export async function runUpstreamBalanceCollection(now: Date, readClient: Readon
         };
       });
     },
-    probe: queryConfiguredUpstreamBalance,
+    probe: queryConfiguredUpstreamUsageSnapshot,
+    rateProbe: queryUpstreamRateMultiplier,
+    estimateRate: async (accountId, bucketStart, snapshot) => {
+      const historyStart = new Date(bucketStart.getTime() - 15 * 60_000);
+      const previous = await prisma.accountMetricMinute.findFirst({
+        where: {
+          accountId,
+          bucketStart: { gte: historyStart, lt: bucketStart },
+          upstreamKeyUsedUsd: { not: null },
+        },
+        orderBy: { bucketStart: 'asc' },
+        select: { bucketStart: true, upstreamKeyUsedUsd: true, upstreamKeyStandardUsd: true },
+      });
+      if (previous?.upstreamKeyUsedUsd == null || snapshot.keyUsedUsd == null) return null;
+      let baseBilledUsd: number;
+      if (previous.upstreamKeyStandardUsd != null && snapshot.keyStandardUsd != null) {
+        baseBilledUsd = snapshot.keyStandardUsd - Number(previous.upstreamKeyStandardUsd);
+      } else {
+        const minutes = await prisma.accountMetricMinute.findMany({
+          where: { accountId, bucketStart: { gt: previous.bucketStart, lte: bucketStart } },
+          orderBy: { bucketStart: 'asc' },
+          select: { baseBilledUsd: true },
+        });
+        const expectedMinutes = (bucketStart.getTime() - previous.bucketStart.getTime()) / 60_000;
+        if (!Number.isInteger(expectedMinutes) || expectedMinutes <= 0 || minutes.length !== expectedMinutes) return null;
+        baseBilledUsd = minutes.reduce((sum, minute) => sum + Number(minute.baseBilledUsd), 0);
+      }
+      return estimateUpstreamRateMultiplier({
+        previousKeyUsedUsd: Number(previous.upstreamKeyUsedUsd),
+        currentKeyUsedUsd: snapshot.keyUsedUsd,
+        baseBilledUsd,
+      });
+    },
     write: async (bucketStart, rows) => {
       await prisma.$transaction(async (tx) => {
         for (const row of rows) {
           await tx.accountMetricMinute.upsert({
             where: { accountId_bucketStart: { accountId: row.accountId, bucketStart } },
-            create: { accountId: row.accountId, bucketStart, balanceUsd: row.balanceUsd },
-            update: { balanceUsd: row.balanceUsd },
+            create: { accountId: row.accountId, bucketStart, balanceUsd: row.balanceUsd, upstreamKeyUsedUsd: row.upstreamKeyUsedUsd, upstreamKeyStandardUsd: row.upstreamKeyStandardUsd, upstreamRateMultiplier: row.upstreamRateMultiplier, upstreamRateSource: row.upstreamRateSource },
+            update: { balanceUsd: row.balanceUsd, upstreamKeyUsedUsd: row.upstreamKeyUsedUsd, upstreamKeyStandardUsd: row.upstreamKeyStandardUsd, upstreamRateMultiplier: row.upstreamRateMultiplier, upstreamRateSource: row.upstreamRateSource },
           });
         }
       });
