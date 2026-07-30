@@ -1,4 +1,5 @@
 import { prisma } from './db';
+import { parseAlertBehaviorSettings } from './account-observability/alert-behavior';
 
 /**
  * 系统设置读写（Setting 表的封装）
@@ -48,6 +49,9 @@ export const SettingKeys = {
   TEST_TIMEOUT_MS: 'test_timeout_ms',           // 测试超时
   RETENTION_DAYS: 'retention_days',             // 数据保留天数
   TIMEZONE: 'timezone',
+  ALERT_CONFIRMATION_WINDOW_MIN: 'alert_confirmation_window_minutes',
+  ALERT_CONFIRMATION_COUNT: 'alert_confirmation_count',
+  ALERT_PRIORITY_FACTOR: 'alert_priority_factor',
 } as const;
 
 export type EditableSettingKey = typeof SettingKeys[keyof typeof SettingKeys];
@@ -60,6 +64,24 @@ const editableSettingKeySet = new Set<string>(EDITABLE_SETTING_KEYS);
 
 export function isEditableSettingKey(key: string): key is EditableSettingKey {
   return editableSettingKeySet.has(key);
+}
+
+export class InvalidEditableSettingValueError extends Error {}
+
+export function validateEditableSettingValue(key: EditableSettingKey, value: unknown): string {
+  const text = String(value);
+  try {
+    if (key === SettingKeys.ALERT_CONFIRMATION_WINDOW_MIN) {
+      parseAlertBehaviorSettings({ alert_confirmation_window_minutes: text });
+    } else if (key === SettingKeys.ALERT_CONFIRMATION_COUNT) {
+      parseAlertBehaviorSettings({ alert_confirmation_count: text });
+    } else if (key === SettingKeys.ALERT_PRIORITY_FACTOR) {
+      parseAlertBehaviorSettings({ alert_priority_factor: text });
+    }
+  } catch {
+    throw new InvalidEditableSettingValueError();
+  }
+  return text;
 }
 
 /** 获取采集相关配置的聚合方法 */

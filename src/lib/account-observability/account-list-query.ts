@@ -99,9 +99,10 @@ export function parseAccountListQuery(params: URLSearchParams): AccountListQuery
   if (sortOrder !== 'asc' && sortOrder !== 'desc') {
     throw new AccountQueryValidationError('invalid account sort order');
   }
+  const filters = parseAccountFilters(params);
   return {
     windowKey: parseAccountWindow(params.get('window')),
-    filters: parseAccountFilters(params),
+    filters: { ...filters, alertGroupsOnly: filters.alertGroupsOnly ?? true },
     page,
     pageSize: pageSize as AccountPageSize,
     sort: { key: sortKey as AccountSortKey, order: sortOrder },
@@ -154,6 +155,24 @@ function accountFilterSql(filters: AccountFilters, includePlatform: boolean): Pr
         CASE WHEN jsonb_typeof(a."groupProjection") = 'array' THEN a."groupProjection" ELSE '[]'::jsonb END
       ) AS selected_group(value)
       WHERE selected_group.value->>'id' = ${String(filters.groupId)}
+    )`);
+  }
+  if (filters.alertGroupsOnly) {
+    conditions.push(Prisma.sql`NOT EXISTS (
+      SELECT 1
+      FROM "GroupAlertSetting" alert_group
+      WHERE alert_group."alertEnabled" = false
+        AND alert_group."groupId" = (
+          SELECT CASE WHEN COUNT(DISTINCT valid_group.id) = 1 THEN MIN(valid_group.id) END
+          FROM (
+            SELECT (group_item.value->>'id')::integer AS id
+            FROM jsonb_array_elements(
+              CASE WHEN jsonb_typeof(a."groupProjection") = 'array' THEN a."groupProjection" ELSE '[]'::jsonb END
+            ) AS group_item(value)
+            WHERE jsonb_typeof(group_item.value->'id') IN ('number', 'string')
+              AND group_item.value->>'id' ~ '^[1-9][0-9]*$'
+          ) valid_group
+        )
     )`);
   }
   if (filters.search) {

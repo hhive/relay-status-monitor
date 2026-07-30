@@ -9,6 +9,7 @@ import {
   type AccountMetricMinuteRecord,
   type AccountAlertRuleRecord,
 } from '../src/lib/account-observability/alerts';
+import { advanceAlertCandidate, type AlertCandidateState } from '../src/lib/account-observability/alert-behavior';
 
 test('account alerts require minimum samples and fresh optional multiplier snapshots', () => {
   assert.equal(evaluateAccountMetricAlert({ metric: 'availability_low', value: 0.2, threshold: 0.9, eligibleCount: 2, minRequests: 5 }), null);
@@ -42,11 +43,15 @@ function harness(input: {
     deliveredChannelIds: readonly number[],
     onDelivered: (channelId: number) => Promise<void>,
   ) => Promise<void>;
+  confirmationCount?: number;
 }) {
   const created: Array<Record<string, unknown>> = [];
   const resolved: Array<{ id: number; at: Date }> = [];
   const notified: Array<{ recovery: boolean; metric: string; metricValue: number | null; message: string }> = [];
   const normalCountUpdates: Array<{ id: number; count: number }> = [];
+  const signalCandidates = new Map<number, AlertCandidateState & { active: boolean; adjustmentLevel: number; recoveryNormalCount: number }>();
+  const priorityAdjusted: number[] = [];
+  const priorityRestored: number[] = [];
   const normalizeEvent = (event: TestAlertEventRecord): AccountAlertEventRecord => ({
     ...event,
     recoveryNormalCount: event.recoveryNormalCount ?? 0,
@@ -55,6 +60,7 @@ function harness(input: {
   const recentEvents = (input.recentEvents ?? []).map(normalizeEvent);
   const account = {
     id: 9, sourceAccountId: 'acct-9', name: 'Account 9', platform: 'anthropic', schedulable: true,
+    groupProjection: [{ id: 1, name: 'Enabled' }],
     syncState: 'ACTIVE', lastSyncedAt: new Date('2026-07-25T11:59:00Z'), probeFreshAt: null,
     probeLastSuccessAt: null, probeStatus: null, probeBillingScope: null, probeResolvedRateMultiplier: null,
     probePeakRateEnabled: null, probePeakStart: null, probePeakEnd: null, probePeakRateMultiplier: null,
@@ -67,6 +73,28 @@ function harness(input: {
       ? [[account.id, input.account.balanceHistory]]
       : []),
     loadDisabledGroupIds: async () => input.disabledGroupIds ?? new Set(),
+    loadBehaviorSettings: async () => ({ confirmationWindowMinutes: 5, confirmationCount: input.confirmationCount ?? 1, priorityFactor: 10 }),
+    recordTriggeredSignal: async ({ ruleId, now, settings, allowStart }) => {
+      const current = signalCandidates.get(ruleId);
+      if (!current && !allowStart) return { confirmed: false, activated: false, deactivated: false };
+      const advanced = advanceAlertCandidate(current ?? null, now, settings.confirmationWindowMinutes, settings.confirmationCount);
+      const adjustmentLevel = (current?.adjustmentLevel ?? 0) + (advanced.confirmed ? 1 : 0);
+      signalCandidates.set(ruleId, { ...advanced.state, active: adjustmentLevel > 0, adjustmentLevel, recoveryNormalCount: 0 });
+      return { confirmed: advanced.confirmed, activated: advanced.confirmed, deactivated: false };
+    },
+    recordNormalSignal: async (_accountId, ruleId) => {
+      const current = signalCandidates.get(ruleId);
+      if (!current?.active) return { confirmed: false, activated: false, deactivated: false };
+      current.recoveryNormalCount += 1;
+      if (current.recoveryNormalCount < 3) return { confirmed: true, activated: false, deactivated: false };
+      current.adjustmentLevel -= 1;
+      current.recoveryNormalCount = 0;
+      if (current.adjustmentLevel === 0) signalCandidates.delete(ruleId);
+      return { confirmed: current.adjustmentLevel > 0, activated: false, deactivated: true };
+    },
+    resetSignalRecovery: async (_accountId, ruleId) => { const current = signalCandidates.get(ruleId); if (current) current.recoveryNormalCount = 0; },
+    onSignalConfirmed: async (signalAccount) => { priorityAdjusted.push(signalAccount.id); },
+    onSignalDeactivated: async (signalAccount) => { priorityRestored.push(signalAccount.id); },
     loadLatestMetricBucket: async () => input.latestMetricBucketStart
       ?? account.metricMinutes.reduce<Date | null>((latest, item) => latest == null || item.bucketStart > latest ? item.bucketStart : latest, null),
     findOpenEvent: async (accountId, ruleId) => openEvents.find((event) => event.accountId === accountId && event.ruleId === ruleId) ?? null,
@@ -87,13 +115,54 @@ function harness(input: {
       await input.notify?.(event, recovery, deliveredChannelIds, onDelivered);
     },
   };
-  return { evaluate: createAccountAlertEvaluator(dependencies), created, resolved, notified, openEvents, normalCountUpdates };
+  return { evaluate: createAccountAlertEvaluator(dependencies), created, resolved, notified, openEvents, normalCountUpdates, priorityAdjusted, priorityRestored };
 }
 
 const minute = (overrides: Partial<AccountMetricMinuteRecord> = {}): AccountMetricMinuteRecord => ({
   bucketStart: new Date('2026-07-25T11:59:00Z'), successCount: 8, upstreamErrorCount: 2,
   eligibleCount: 10, durationHistogram: { '100': 9, '500': 1 }, firstTokenHistogram: { '20': 9, '200': 1 },
   inputTokens: BigInt(100), cacheReadTokens: BigInt(20), cacheCreationTokens: BigInt(0), balanceUsd: null, ...overrides,
+});
+
+test('each two rule hits adds a priority layer and each three normal evaluations removes one', async () => {
+  const minutes = [minute({ successCount: 2, upstreamErrorCount: 8 })];
+  const run = harness({ rules: [rule()], minutes, confirmationCount: 2 });
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.equal(run.created.length, 0);
+  await run.evaluate(new Date('2026-07-25T12:01:00Z'));
+  assert.equal(run.created.length, 1);
+  assert.deepEqual(run.priorityAdjusted, [9]);
+
+  await run.evaluate(new Date('2026-07-25T12:02:00Z'));
+  await run.evaluate(new Date('2026-07-25T12:03:00Z'));
+  assert.deepEqual(run.priorityAdjusted, [9, 9]);
+
+  minutes[0].successCount = 10;
+  minutes[0].upstreamErrorCount = 0;
+  await run.evaluate(new Date('2026-07-25T12:04:00Z'));
+  await run.evaluate(new Date('2026-07-25T12:05:00Z'));
+  assert.deepEqual(run.priorityRestored, []);
+  await run.evaluate(new Date('2026-07-25T12:06:00Z'));
+  assert.deepEqual(run.priorityRestored, [9]);
+  await run.evaluate(new Date('2026-07-25T12:07:00Z'));
+  await run.evaluate(new Date('2026-07-25T12:08:00Z'));
+  await run.evaluate(new Date('2026-07-25T12:09:00Z'));
+  assert.deepEqual(run.priorityRestored, [9, 9]);
+});
+
+test('accounts without an alert-enabled group can alert but never add a priority layer', async () => {
+  for (const groupProjection of [[], [{ id: 7, name: 'Disabled' }]]) {
+    const run = harness({
+      rules: [rule()],
+      minutes: [minute({ successCount: 2, upstreamErrorCount: 8 })],
+      confirmationCount: 2,
+      account: { groupProjection },
+      disabledGroupIds: new Set([7]),
+    });
+    await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+    await run.evaluate(new Date('2026-07-25T12:01:00Z'));
+    assert.deepEqual(run.priorityAdjusted, []);
+  }
 });
 
 test('upstream rate deviation alerts only when the latest API and estimated rates differ by more than ten percent', async () => {

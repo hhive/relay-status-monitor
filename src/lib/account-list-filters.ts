@@ -10,6 +10,7 @@ export interface AccountFilterPreferences {
   status: AccountStatusFilter;
   platform: string;
   groupId: number | null;
+  alertGroupsOnly: boolean;
   pageSize: AccountPageSize;
 }
 
@@ -24,6 +25,7 @@ export const DEFAULT_ACCOUNT_FILTER_PREFERENCES: AccountFilterPreferences = {
   status: 'schedulable',
   platform: '',
   groupId: null,
+  alertGroupsOnly: true,
   pageSize: 50,
 };
 
@@ -47,6 +49,7 @@ function isPreferences(value: unknown): value is AccountFilterPreferences {
     && typeof candidate.status === 'string' && statuses.has(candidate.status as AccountStatusFilter)
     && validPlatform
     && validGroup
+    && (candidate.alertGroupsOnly === undefined || typeof candidate.alertGroupsOnly === 'boolean')
     && typeof candidate.pageSize === 'number'
     && ACCOUNT_PAGE_SIZES.includes(candidate.pageSize as AccountPageSize);
 }
@@ -62,6 +65,7 @@ export function readAccountFilterPreferences(storage: AccountFilterStorage): Acc
       status: parsed.status,
       platform: parsed.platform,
       groupId: parsed.groupId,
+      alertGroupsOnly: parsed.alertGroupsOnly ?? true,
       pageSize: parsed.pageSize,
     };
   } catch {
@@ -80,6 +84,7 @@ export function writeAccountFilterPreferences(
       status: next.status,
       platform: next.platform,
       groupId: next.groupId,
+      alertGroupsOnly: next.alertGroupsOnly,
       pageSize: next.pageSize,
     }));
   } catch {

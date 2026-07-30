@@ -3,7 +3,16 @@ import { Prisma, type Severity } from '@prisma/client';
 import { sendAccountNotification } from '../alerts/channels/feishu';
 import { effectiveBillingRate, histogramP95, mergeLatencyHistogram, minuteBucket } from './metrics';
 import { normalizeGlobalAccountAlertMetric } from './alert-management';
-import { shouldSuppressAccountAlerts } from './group-alert-settings';
+import { isAccountInAlertEnabledGroup, shouldSuppressAccountAlerts } from './group-alert-settings';
+import {
+  loadAlertBehaviorSettings,
+  recordNormalSignal,
+  recordTriggeredSignal,
+  resetSignalRecovery,
+  type AlertSignalTransition,
+} from './alert-signal-store';
+import type { AlertBehaviorSettings } from './alert-behavior';
+import { ensurePriorityAdjusted, ensurePriorityRestored, retryPriorityAdjustments } from './priority-coordinator';
 
 export type AccountAlertMetric =
   | 'availability_low'
@@ -102,6 +111,13 @@ export interface AccountAlertDependencies {
   loadAccounts: (window: { start: Date; end: Date }) => Promise<AccountAlertAccountRecord[]>;
   loadBalanceHistory: (accountIds: number[], before: Date) => Promise<Map<number, AccountBalanceMinuteRecord[]>>;
   loadDisabledGroupIds: () => Promise<ReadonlySet<number>>;
+  loadBehaviorSettings?: () => Promise<AlertBehaviorSettings>;
+  recordTriggeredSignal?: (input: { accountId: number; ruleId: number; now: Date; settings: AlertBehaviorSettings; allowStart: boolean }) => Promise<AlertSignalTransition>;
+  recordNormalSignal?: (accountId: number, ruleId: number) => Promise<AlertSignalTransition>;
+  resetSignalRecovery?: (accountId: number, ruleId: number) => Promise<void>;
+  onSignalConfirmed?: (account: AccountAlertAccountRecord, settings: AlertBehaviorSettings) => Promise<void>;
+  onSignalDeactivated?: (account: AccountAlertAccountRecord) => Promise<void>;
+  retryPriorityAdjustments?: (accounts: ReadonlyMap<number, AccountAlertAccountRecord & { priorityEligible: boolean }>, settings: AlertBehaviorSettings) => Promise<void>;
   loadLatestMetricBucket: (accountId: number) => Promise<Date | null>;
   findOpenEvent: (accountId: number, ruleId: number) => Promise<AccountAlertEventRecord | null>;
   findRecentEvent: (accountId: number, ruleId: number, since: Date) => Promise<AccountAlertEventRecord | null>;
@@ -316,10 +332,11 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
   return async (now = new Date()): Promise<void> => {
     const end = minuteBucket(now);
     const start = new Date(end.getTime() - ALERT_WINDOW_MINUTES * 60_000);
-    const [storedRules, accounts, disabledGroupIds] = await Promise.all([
+    const [storedRules, accounts, disabledGroupIds, behaviorSettings] = await Promise.all([
       dependencies.loadRules(),
       dependencies.loadAccounts({ start, end }),
       dependencies.loadDisabledGroupIds(),
+      dependencies.loadBehaviorSettings?.() ?? Promise.resolve({ confirmationWindowMinutes: 5, confirmationCount: 1, priorityFactor: 0 }),
     ]);
     const rules = storedRules.flatMap((rule) => {
       const metric = rule.metric === 'upstream_rate_multiplier'
@@ -330,8 +347,13 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
     const balanceHistory = rules.some((rule) => rule.enabled && rule.metric === 'balance_low')
       ? await dependencies.loadBalanceHistory(accounts.map((account) => account.id), end)
       : new Map<number, AccountBalanceMinuteRecord[]>();
+    await dependencies.retryPriorityAdjustments?.(new Map(accounts.map((account) => [account.id, {
+      ...account,
+      priorityEligible: isAccountInAlertEnabledGroup(account.groupProjection, disabledGroupIds),
+    }])), behaviorSettings);
     for (const account of accounts) {
       account.balanceHistory = balanceHistory.get(account.id) ?? [];
+      const priorityEligible = isAccountInAlertEnabledGroup(account.groupProjection, disabledGroupIds);
       if (account.alertEnabled === false) continue;
       if (shouldSuppressAccountAlerts(account.groupProjection, disabledGroupIds)) continue;
       const needsLatestMetricBucket = rules.some((rule) =>
@@ -345,10 +367,13 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
         const result = evaluateRule(rule, account, now, latestMetricBucketStart);
         const open = await dependencies.findOpenEvent(account.id, rule.id);
         if (!result.available) {
+          await dependencies.resetSignalRecovery?.(account.id, rule.id);
           if (open) await setRecoveryNormalCount(dependencies, open, 0);
           continue;
         }
         if (!result.triggered && open) {
+          const signal = await dependencies.recordNormalSignal?.(account.id, rule.id);
+          if (signal?.deactivated && priorityEligible) await dependencies.onSignalDeactivated?.(account);
           const normalCount = Math.min(3, boundedRecoveryNormalCount(open.recoveryNormalCount) + 1);
           await setRecoveryNormalCount(dependencies, open, normalCount);
           if (normalCount < 3) continue;
@@ -363,15 +388,30 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
           await dependencies.resolveEvent(open.id, now);
           continue;
         }
-        if (!result.triggered) continue;
+        if (!result.triggered) {
+          const signal = await dependencies.recordNormalSignal?.(account.id, rule.id);
+          if (signal?.deactivated && priorityEligible) await dependencies.onSignalDeactivated?.(account);
+          continue;
+        }
         if (open) {
+          const openSignal = await dependencies.recordTriggeredSignal?.({
+            accountId: account.id, ruleId: rule.id, now, settings: behaviorSettings, allowStart: true,
+          });
+          if (openSignal?.activated && priorityEligible) await dependencies.onSignalConfirmed?.(account, behaviorSettings);
           await setRecoveryNormalCount(dependencies, open, 0);
           if (open.notificationDeliveries != null) {
             await notifyEvent(dependencies, open, account, false);
           }
           continue;
         }
-        if (rule.metric === 'balance_low' && result.crossed !== true) continue;
+        const signal = dependencies.recordTriggeredSignal
+          ? await dependencies.recordTriggeredSignal({
+            accountId: account.id, ruleId: rule.id, now, settings: behaviorSettings,
+            allowStart: rule.metric !== 'balance_low' || result.crossed === true,
+          })
+          : { confirmed: true, activated: false, deactivated: false };
+        if (signal.activated && priorityEligible) await dependencies.onSignalConfirmed?.(account, behaviorSettings);
+        if (!signal.confirmed) continue;
         const cooldownStart = new Date(now.getTime() - rule.cooldownMin * 60_000);
         if (rule.metric !== 'balance_low' && await dependencies.findRecentEvent(account.id, rule.id, cooldownStart)) continue;
         const event = await dependencies.createEvent({
@@ -416,6 +456,13 @@ export async function evaluateAccountAlerts(now = new Date()): Promise<void> {
       where: { alertEnabled: false },
       select: { groupId: true },
     })).map((setting) => setting.groupId)),
+    loadBehaviorSettings: loadAlertBehaviorSettings,
+    recordTriggeredSignal,
+    recordNormalSignal,
+    resetSignalRecovery,
+    onSignalConfirmed: (account, settings) => ensurePriorityAdjusted(account, settings.priorityFactor),
+    onSignalDeactivated: (account) => ensurePriorityRestored(account.id),
+    retryPriorityAdjustments: (accounts, settings) => retryPriorityAdjustments(accounts, settings.priorityFactor),
     loadLatestMetricBucket: async (accountId) => {
       const latest = await prisma.accountMetricMinute.findFirst({
         where: { accountId },

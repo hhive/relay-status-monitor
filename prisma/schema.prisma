@@ -88,6 +88,8 @@ model Sub2ApiAccount {
   syncRuns                   AccountSyncRun[]
   alertEvents                AccountAlertEvent[]
   alertRules                 AccountAlertRule[]
+  alertCandidates            AccountAlertCandidate[]
+  priorityAdjustment         AccountPriorityAdjustment?
   balanceCredential           AccountBalanceCredential?
 
   @@index([syncState, remoteStatus])
@@ -217,6 +219,7 @@ model AccountAlertRule {
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
   events          AccountAlertEvent[]
+  candidates      AccountAlertCandidate[]
 
   @@index([enabled, metric])
   @@index([accountId, enabled])
@@ -267,6 +270,40 @@ model GroupAlertSetting {
   alertEnabled Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model AccountAlertCandidate {
+  accountId       Int
+  account         Sub2ApiAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  ruleId          Int
+  rule            AccountAlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  windowStartedAt DateTime
+  lastTriggeredAt DateTime
+  triggerCount    Int              @default(1)
+  active           Boolean          @default(false)
+  adjustmentLevel  Int              @default(0)
+  recoveryNormalCount Int           @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@id([accountId, ruleId])
+}
+
+model AccountPriorityAdjustment {
+  accountId        Int            @id
+  account          Sub2ApiAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  sourceAccountId  String
+  expectedPriority Int?
+  basePriority     Int?
+  adjustedPriority Int?
+  restoreExpectedPriority Int?
+  restoreTargetPriority Int?
+  appliedFactors  Int[]          @default([])
+  factor           Int
+  status           String         @default("PENDING")
+  lastError        String?        @db.Text
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 }
 
 model User {

@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   GroupAlertSettingValidationError,
   buildGroupAlertSettingSummaries,
+  isAccountInAlertEnabledGroup,
   parseGroupAlertSettingUpdate,
   shouldSuppressAccountAlerts,
   uniqueGroupId,
@@ -52,6 +53,15 @@ test('only an account exclusively assigned to a disabled group is suppressed', (
   assert.equal(shouldSuppressAccountAlerts([{ id: 8 }], disabled), false);
   assert.equal(shouldSuppressAccountAlerts([], disabled), false);
   assert.equal(shouldSuppressAccountAlerts([{ id: 7 }], new Set()), false);
+});
+
+test('priority adjustment requires at least one alert-enabled group', () => {
+  const disabled = new Set([7, 9]);
+  assert.equal(isAccountInAlertEnabledGroup([{ id: 8 }], disabled), true);
+  assert.equal(isAccountInAlertEnabledGroup([{ id: 7 }, { id: 8 }], disabled), true);
+  assert.equal(isAccountInAlertEnabledGroup([{ id: 7 }, { id: 9 }], disabled), false);
+  assert.equal(isAccountInAlertEnabledGroup([], disabled), false);
+  assert.equal(isAccountInAlertEnabledGroup(null, disabled), false);
 });
 
 test('group summaries expose stable names, defaults, exclusive counts and bound counts', () => {

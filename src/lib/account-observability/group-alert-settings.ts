@@ -57,6 +57,14 @@ export function shouldSuppressAccountAlerts(
   return groupId !== null && disabledGroupIds.has(groupId);
 }
 
+export function isAccountInAlertEnabledGroup(
+  projection: unknown,
+  disabledGroupIds: ReadonlySet<number>,
+): boolean {
+  const ids = groupIds(projection);
+  return ids !== null && ids.length > 0 && ids.some((id) => !disabledGroupIds.has(id));
+}
+
 export function buildGroupAlertSettingSummaries(
   accounts: readonly GroupProjectionAccount[],
   settings: readonly GroupAlertSettingRecord[],

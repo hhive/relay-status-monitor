@@ -280,6 +280,8 @@ function RulesTab() {
         配置账号真实流量与同步状态告警。规则身份由系统固定，只能调整适用参数。
       </p>
 
+      <AlertBehaviorCard />
+
       {rules.length === 0 ? (
         <Card className="flex h-32 items-center justify-center text-muted-foreground">
           暂无告警规则
@@ -391,6 +393,47 @@ function RulesTab() {
       )}
     </div>
   );
+}
+
+function AlertBehaviorCard() {
+  const [values, setValues] = useState({ window: '5', count: '2', factor: '10' });
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    fetch('/api/settings').then((response) => response.json()).then((settings) => setValues({
+      window: settings.alert_confirmation_window_minutes ?? '5',
+      count: settings.alert_confirmation_count ?? '2',
+      factor: settings.alert_priority_factor ?? '10',
+    })).catch(() => undefined);
+  }, []);
+  const save = async () => {
+    setSaving(true);
+    try {
+      const response = await apiFetch('/api/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          alert_confirmation_window_minutes: values.window,
+          alert_confirmation_count: values.count,
+          alert_priority_factor: values.factor,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || '保存告警行为失败');
+      toast.success('告警行为已保存');
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <Card>
+    <CardHeader><CardTitle className="text-base">告警行为</CardTitle><CardDescription>配置规则确认窗口、命中次数和 Sub2API 优先级调整系数</CardDescription></CardHeader>
+    <CardContent className="grid gap-3 sm:grid-cols-3 lg:grid-cols-[1fr_1fr_1fr_auto] lg:items-end">
+      <label className="space-y-1 text-sm"><span>确认窗口（分钟）</span><Input type="number" min="1" max="60" value={values.window} onChange={(event) => setValues({ ...values, window: event.target.value })} /></label>
+      <label className="space-y-1 text-sm"><span>窗口内命中次数</span><Input type="number" min="1" max="20" value={values.count} onChange={(event) => setValues({ ...values, count: event.target.value })} /></label>
+      <label className="space-y-1 text-sm"><span>优先级系数（0 禁用）</span><Input type="number" min="0" max="1000" value={values.factor} onChange={(event) => setValues({ ...values, factor: event.target.value })} /></label>
+      <Button onClick={() => void save()} disabled={saving}><Save data-icon="inline-start" />保存</Button>
+    </CardContent>
+  </Card>;
 }
 
 function RuleNumberInput({ rule, field, drafts, updatingId, onChange, onCommit, wide = false }: {

@@ -18,7 +18,7 @@ test('list query parser applies safe defaults and rejects invalid paging or sort
   const defaults = parseAccountListQuery(new URLSearchParams());
   assert.deepEqual(defaults, {
     windowKey: 'last1h',
-    filters: { status: 'schedulable', platform: null, groupId: null, search: null },
+    filters: { status: 'schedulable', platform: null, groupId: null, search: null, alertGroupsOnly: true },
     page: 1,
     pageSize: 50,
     sort: { key: 'alertEnabled', order: 'desc' },
@@ -28,6 +28,16 @@ test('list query parser applies safe defaults and rejects invalid paging or sort
     assert.throws(() => parseAccountListQuery(new URLSearchParams(query)), /invalid/i, query);
   }
   assert.throws(() => buildAccountListPageQuery({ ...defaults, sort: { key: 'injected' as never, order: 'asc' } }, 1, 0), /invalid/i);
+  assert.equal(parseAccountListQuery(new URLSearchParams('alertGroupsOnly=false')).filters.alertGroupsOnly, false);
+  assert.throws(() => parseAccountListQuery(new URLSearchParams('alertGroupsOnly=yes')), /invalid/i);
+});
+
+test('default list SQL excludes only accounts uniquely assigned to a disabled alert group', () => {
+  const enabledOnly = buildAccountListPageQuery(parseAccountListQuery(new URLSearchParams()), 7, 0);
+  assert.match(sqlText(enabledOnly), /GroupAlertSetting/);
+  assert.match(sqlText(enabledOnly), /alertEnabled/);
+  const all = buildAccountListPageQuery(parseAccountListQuery(new URLSearchParams('alertGroupsOnly=false')), 7, 0);
+  assert.doesNotMatch(sqlText(all), /GroupAlertSetting/);
 });
 
 test('all fourteen sort keys use fixed SQL with NULLS LAST and deterministic account ties', () => {

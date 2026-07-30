@@ -64,7 +64,9 @@ interface AccountQueryClient {
   accountAlertEvent?: { count(args: Record<string, unknown>): Promise<number> };
 }
 
-const DEFAULT_FILTERS: AccountFilters = { status: 'schedulable', platform: null, groupId: null, search: null };
+const DEFAULT_FILTERS: AccountFilters = {
+  status: 'schedulable', platform: null, groupId: null, search: null, alertGroupsOnly: true,
+};
 
 function billingProbe(account: AccountRow) {
   const resolved = account.probeResolvedRateMultiplier?.toString() ?? null;

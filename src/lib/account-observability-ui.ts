@@ -129,6 +129,7 @@ export interface AccountListQueryInput {
     platform: string | null;
     groupId: number | null;
     search: string | null;
+    alertGroupsOnly: boolean;
   };
   page: number;
   pageSize: AccountPageSize;

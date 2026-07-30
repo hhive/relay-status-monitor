@@ -8,6 +8,7 @@ export interface AccountFilters {
   platform: string | null;
   groupId: number | null;
   search: string | null;
+  alertGroupsOnly?: boolean;
 }
 
 interface FilterableAccount {
@@ -36,11 +37,16 @@ export function parseAccountFilters(params: URLSearchParams): AccountFilters {
   if (rawGroupId !== null && (!/^[1-9]\d*$/.test(rawGroupId) || !Number.isSafeInteger(groupId))) {
     throw new AccountQueryValidationError('invalid account group');
   }
+  const rawAlertGroupsOnly = params.get('alertGroupsOnly');
+  if (rawAlertGroupsOnly !== null && rawAlertGroupsOnly !== 'true' && rawAlertGroupsOnly !== 'false') {
+    throw new AccountQueryValidationError('invalid account alert group filter');
+  }
   return {
     status: status as AccountStatusFilter,
     platform: optionalValue(params, 'platform'),
     groupId,
     search: optionalValue(params, 'search'),
+    alertGroupsOnly: rawAlertGroupsOnly !== 'false',
   };
 }
 

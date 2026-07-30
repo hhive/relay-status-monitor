@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { clearSettingsCache, isEditableSettingKey, setSetting } from '@/lib/settings';
+import { clearSettingsCache, InvalidEditableSettingValueError, isEditableSettingKey, setSetting, validateEditableSettingValue, type EditableSettingKey } from '@/lib/settings';
 import { requireApiSession } from '@/lib/auth';
 
 /** 获取所有设置 */
@@ -30,11 +30,12 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: '包含不允许修改的设置项' }, { status: 400 });
     }
     for (const [key, value] of Object.entries(body)) {
-      await setSetting(key, String(value));
+      await setSetting(key, validateEditableSettingValue(key as EditableSettingKey, value));
     }
     clearSettingsCache();
     return NextResponse.json({ ok: true });
-  } catch {
-    return NextResponse.json({ error: '更新设置失败' }, { status: 500 });
+  } catch (error) {
+    const invalid = error instanceof InvalidEditableSettingValueError;
+    return NextResponse.json({ error: invalid ? '告警行为配置无效' : '更新设置失败' }, { status: invalid ? 400 : 500 });
   }
 }

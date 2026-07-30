@@ -78,6 +78,7 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   const [status, setStatus] = useState<AccountStatusFilter>('schedulable');
   const [platform, setPlatform] = useState('');
   const [groupId, setGroupId] = useState<number | null>(null);
+  const [alertGroupsOnly, setAlertGroupsOnly] = useState(true);
   const [search, setSearch] = useState('');
   const [deferredSearch, setDeferredSearch] = useState('');
   const [trendView, setTrendView] = useState<keyof typeof TREND_VIEWS>('quality');
@@ -111,6 +112,7 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
     setStatus(filters.status);
     setPlatform(filters.platform);
     setGroupId(filters.groupId);
+    setAlertGroupsOnly(filters.alertGroupsOnly);
     setPageSize(filters.pageSize);
     setFiltersReady(true);
   }, []);
@@ -126,10 +128,11 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
       status,
       platform,
       groupId,
+      alertGroupsOnly,
       pageSize,
       ...overrides,
     });
-  }, [groupId, pageSize, platform, status, windowKey]);
+  }, [alertGroupsOnly, groupId, pageSize, platform, status, windowKey]);
 
   const fetchOverview = useCallback(async () => {
     if (!filtersReady || listOnly) return;
@@ -170,13 +173,14 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
     });
     if (platform) params.set('platform', platform);
     if (groupId !== null) params.set('groupId', String(groupId));
+    params.set('alertGroupsOnly', String(alertGroupsOnly));
     if (deferredSearch) params.set('search', deferredSearch);
     try {
       const response = await apiFetch(`/api/accounts/list?${params}`);
       const body = await response.json() as AccountListResponseDto & { error?: string };
       if (!response.ok) throw new Error(body.error || '账号列表暂不可用');
       if (!isCurrent()) return;
-      const currentFilters = { windowKey, status, platform, groupId, pageSize };
+      const currentFilters = { windowKey, status, platform, groupId, alertGroupsOnly, pageSize };
       const nextFilters = reconcileAccountFilterPreferences(currentFilters, body.facets);
       const correctedFilters = nextFilters !== currentFilters;
       if (nextFilters.platform !== platform) setPlatform('');
@@ -193,7 +197,7 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
         setListRefreshing(false);
       }
     }
-  }, [deferredSearch, filtersReady, groupId, page, pageSize, persistFilters, platform, sortReady, sortState, status, windowKey]);
+  }, [alertGroupsOnly, deferredSearch, filtersReady, groupId, page, pageSize, persistFilters, platform, sortReady, sortState, status, windowKey]);
 
   useEffect(() => { void fetchOverview(); }, [fetchOverview]);
   useEffect(() => { void fetchList(); }, [fetchList]);
@@ -235,6 +239,9 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
   const changeGroup = (value: string) => {
     const next = value === 'all' ? null : Number(value);
     setPage(1); setGroupId(next); persistFilters({ groupId: next });
+  };
+  const changeAlertGroupsOnly = (value: boolean) => {
+    setPage(1); setAlertGroupsOnly(value); persistFilters({ alertGroupsOnly: value });
   };
   const changePageSize = (value: string) => {
     const next = Number(value) as AccountPageSize;
@@ -313,7 +320,7 @@ export function AccountOverview({ listOnly = false }: { listOnly?: boolean }) {
           <h2 id="account-list-heading" className="text-sm font-semibold">账号列表</h2>
           <span className="text-xs text-muted-foreground">{list?.pagination.totalItems ?? 0} 个账号</span>
         </div>
-        <AccountFilters search={search} onSearch={setSearch} platform={platform} onPlatform={changePlatform} groupId={groupId} onGroup={changeGroup} platforms={list?.facets.platforms ?? []} groups={list?.facets.groups ?? []} />
+        <AccountFilters search={search} onSearch={setSearch} platform={platform} onPlatform={changePlatform} groupId={groupId} onGroup={changeGroup} alertGroupsOnly={alertGroupsOnly} onAlertGroupsOnly={changeAlertGroupsOnly} platforms={list?.facets.platforms ?? []} groups={list?.facets.groups ?? []} />
         {listError ? <div role="alert" className="flex items-center gap-2 rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"><AlertCircle className="size-4 shrink-0" />{listError}{list ? '，已保留上次列表' : ''}</div> : null}
         {listLoading && !list ? <Skeleton className="h-64" /> : list
           ? <AccountList data={list} accounts={list.accounts} coverage={overview?.coverage} pageSize={pageSize} onPageSizeChange={changePageSize} onPageChange={setPage} sortState={sortState} onSort={toggleSortKey} onSortChange={updateSort} pendingAlertAccounts={pendingAlertAccounts} onToggleAlert={toggleAlert} />
@@ -338,11 +345,12 @@ function SummaryGrid({ data }: { data: AccountOverviewResponseDto }) {
   </div>;
 }
 
-function AccountFilters({ search, onSearch, platform, onPlatform, groupId, onGroup, platforms, groups }: { search: string; onSearch: (value: string) => void; platform: string; onPlatform: (value: string) => void; groupId: number | null; onGroup: (value: string) => void; platforms: string[]; groups: Array<{ id: number; name: string }> }) {
-  return <div className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_12rem_12rem]">
+function AccountFilters({ search, onSearch, platform, onPlatform, groupId, onGroup, alertGroupsOnly, onAlertGroupsOnly, platforms, groups }: { search: string; onSearch: (value: string) => void; platform: string; onPlatform: (value: string) => void; groupId: number | null; onGroup: (value: string) => void; alertGroupsOnly: boolean; onAlertGroupsOnly: (value: boolean) => void; platforms: string[]; groups: Array<{ id: number; name: string }> }) {
+  return <div className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_12rem_12rem_auto] lg:items-center">
     <div className="relative min-w-0"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input type="search" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索账号、平台或分组" className="pl-9" /></div>
     <Select value={platform || 'all'} onValueChange={(value) => onPlatform(value === 'all' ? '' : value)}><SelectTrigger aria-label="筛选平台"><SelectValue placeholder="筛选平台" /></SelectTrigger><SelectContent><SelectItem value="all">全部平台</SelectItem>{platforms.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select>
     <Select value={groupId === null ? 'all' : String(groupId)} onValueChange={onGroup}><SelectTrigger aria-label="筛选分组"><SelectValue placeholder="筛选分组" /></SelectTrigger><SelectContent><SelectItem value="all">全部分组</SelectItem>{groups.map((group) => <SelectItem key={group.id} value={String(group.id)}>{group.name}</SelectItem>)}</SelectContent></Select>
+    <label className="flex min-h-10 items-center gap-2 whitespace-nowrap text-sm"><Switch checked={alertGroupsOnly} onCheckedChange={onAlertGroupsOnly} aria-label="仅展示告警分组已开启账号" /><span>仅告警分组</span></label>
   </div>;
 }
 
