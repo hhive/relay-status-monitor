@@ -32,10 +32,13 @@ test('list query parser applies safe defaults and rejects invalid paging or sort
   assert.throws(() => parseAccountListQuery(new URLSearchParams('alertGroupsOnly=yes')), /invalid/i);
 });
 
-test('default list SQL excludes only accounts uniquely assigned to a disabled alert group', () => {
+test('default list SQL requires at least one alert-enabled group', () => {
   const enabledOnly = buildAccountListPageQuery(parseAccountListQuery(new URLSearchParams()), 7, 0);
-  assert.match(sqlText(enabledOnly), /GroupAlertSetting/);
-  assert.match(sqlText(enabledOnly), /alertEnabled/);
+  const enabledSql = sqlText(enabledOnly);
+  assert.match(enabledSql, /EXISTS/);
+  assert.match(enabledSql, /LEFT JOIN "GroupAlertSetting"/);
+  assert.match(enabledSql, /alert_group\."groupId"/);
+  assert.match(enabledSql, /alert_group\."alertEnabled" IS DISTINCT FROM false/);
   const all = buildAccountListPageQuery(parseAccountListQuery(new URLSearchParams('alertGroupsOnly=false')), 7, 0);
   assert.doesNotMatch(sqlText(all), /GroupAlertSetting/);
 });

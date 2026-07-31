@@ -45,13 +45,15 @@ test('invalid projection entries never create an exclusive group assignment', ()
   }
 });
 
-test('only an account exclusively assigned to a disabled group is suppressed', () => {
-  const disabled = new Set([7]);
+test('accounts require at least one alert-enabled group to avoid suppression', () => {
+  const disabled = new Set([7, 9]);
   assert.equal(shouldSuppressAccountAlerts([{ id: 7 }], disabled), true);
   assert.equal(shouldSuppressAccountAlerts([{ id: 7 }, { id: 7 }], disabled), true);
   assert.equal(shouldSuppressAccountAlerts([{ id: 7 }, { id: 8 }], disabled), false);
+  assert.equal(shouldSuppressAccountAlerts([{ id: 7 }, { id: 9 }], disabled), true);
   assert.equal(shouldSuppressAccountAlerts([{ id: 8 }], disabled), false);
-  assert.equal(shouldSuppressAccountAlerts([], disabled), false);
+  assert.equal(shouldSuppressAccountAlerts([], disabled), true);
+  assert.equal(shouldSuppressAccountAlerts(null, disabled), true);
   assert.equal(shouldSuppressAccountAlerts([{ id: 7 }], new Set()), false);
 });
 

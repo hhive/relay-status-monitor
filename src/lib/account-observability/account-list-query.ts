@@ -158,21 +158,20 @@ function accountFilterSql(filters: AccountFilters, includePlatform: boolean): Pr
     )`);
   }
   if (filters.alertGroupsOnly) {
-    conditions.push(Prisma.sql`NOT EXISTS (
+    conditions.push(Prisma.sql`EXISTS (
       SELECT 1
-      FROM "GroupAlertSetting" alert_group
-      WHERE alert_group."alertEnabled" = false
-        AND alert_group."groupId" = (
-          SELECT CASE WHEN COUNT(DISTINCT valid_group.id) = 1 THEN MIN(valid_group.id) END
-          FROM (
-            SELECT (group_item.value->>'id')::integer AS id
-            FROM jsonb_array_elements(
-              CASE WHEN jsonb_typeof(a."groupProjection") = 'array' THEN a."groupProjection" ELSE '[]'::jsonb END
-            ) AS group_item(value)
-            WHERE jsonb_typeof(group_item.value->'id') IN ('number', 'string')
-              AND group_item.value->>'id' ~ '^[1-9][0-9]*$'
-          ) valid_group
-        )
+      FROM jsonb_array_elements(
+        CASE WHEN jsonb_typeof(a."groupProjection") = 'array' THEN a."groupProjection" ELSE '[]'::jsonb END
+      ) AS group_item(value)
+      LEFT JOIN "GroupAlertSetting" alert_group
+        ON alert_group."groupId" = CASE
+          WHEN jsonb_typeof(group_item.value->'id') IN ('number', 'string')
+            AND group_item.value->>'id' ~ '^[1-9][0-9]*$'
+          THEN (group_item.value->>'id')::integer
+        END
+      WHERE jsonb_typeof(group_item.value->'id') IN ('number', 'string')
+        AND group_item.value->>'id' ~ '^[1-9][0-9]*$'
+        AND alert_group."alertEnabled" IS DISTINCT FROM false
     )`);
   }
   if (filters.search) {

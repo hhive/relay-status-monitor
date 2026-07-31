@@ -150,17 +150,22 @@ test('each two rule hits adds a priority layer and each three normal evaluations
   assert.deepEqual(run.priorityRestored, [9, 9]);
 });
 
-test('accounts without an alert-enabled group can alert but never add a priority layer', async () => {
-  for (const groupProjection of [[], [{ id: 7, name: 'Disabled' }]]) {
+test('accounts without an alert-enabled group create no new alerts or priority layers', async () => {
+  for (const groupProjection of [
+    [],
+    [{ id: 7, name: 'Disabled' }],
+    [{ id: 7, name: 'Disabled' }, { id: 9, name: 'Also disabled' }],
+  ]) {
     const run = harness({
       rules: [rule()],
       minutes: [minute({ successCount: 2, upstreamErrorCount: 8 })],
       confirmationCount: 2,
       account: { groupProjection },
-      disabledGroupIds: new Set([7]),
+      disabledGroupIds: new Set([7, 9]),
     });
     await run.evaluate(new Date('2026-07-25T12:00:00Z'));
     await run.evaluate(new Date('2026-07-25T12:01:00Z'));
+    assert.deepEqual(run.created, []);
     assert.deepEqual(run.priorityAdjusted, []);
   }
 });
@@ -569,17 +574,15 @@ test('exclusive membership in a disabled group suppresses every rule including m
   assert.deepEqual(run.notified, []);
 });
 
-test('multi-group and ungrouped accounts remain eligible when one group is disabled', async () => {
-  for (const groupProjection of [[{ id: 7 }, { id: 8 }], []]) {
-    const run = harness({
-      rules: [rule({ minRequests: 1 })],
-      minutes: [minute({ successCount: 2, upstreamErrorCount: 8 })],
-      account: { groupProjection },
-      disabledGroupIds: new Set([7]),
-    });
-    await run.evaluate(new Date('2026-07-25T12:00:00Z'));
-    assert.deepEqual(run.created.map((event) => event.metric), ['availability_low']);
-  }
+test('multi-group accounts remain eligible when at least one group is enabled', async () => {
+  const run = harness({
+    rules: [rule({ minRequests: 1 })],
+    minutes: [minute({ successCount: 2, upstreamErrorCount: 8 })],
+    account: { groupProjection: [{ id: 7 }, { id: 8 }] },
+    disabledGroupIds: new Set([7]),
+  });
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+  assert.deepEqual(run.created.map((event) => event.metric), ['availability_low']);
 });
 
 test('group suppression leaves an existing open event untouched', async () => {
