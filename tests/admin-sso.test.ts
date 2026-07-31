@@ -154,6 +154,14 @@ test('admin sso exposes only fixed internal failure reasons', async () => {
 
 test('admin sso accepts only exact, current administrator claims', () => {
   assert.deepEqual(validateAdminClaims(validClaims, nowSeconds), validClaims);
+  assert.deepEqual(
+    validateAdminClaims({ ...validClaims, username: '' }, nowSeconds),
+    { ...validClaims, username: 'Sub2API admin' },
+  );
+  assert.deepEqual(
+    validateAdminClaims({ ...validClaims, username: '   ' }, nowSeconds),
+    { ...validClaims, username: 'Sub2API admin' },
+  );
 
   const rejected: unknown[] = [
     { ...validClaims, role: 'user' },

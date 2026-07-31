@@ -149,7 +149,6 @@ export function validateAdminClaims(value: unknown, nowSeconds: number): AdminCl
     typeof record.email !== 'string' ||
     record.email.length === 0 ||
     typeof record.username !== 'string' ||
-    record.username.length === 0 ||
     record.role !== 'admin' ||
     record.app_id !== ADMIN_APP_ID ||
     !Number.isSafeInteger(record.issued_at) ||
@@ -160,7 +159,10 @@ export function validateAdminClaims(value: unknown, nowSeconds: number): AdminCl
     invalidClaims();
   }
 
-  return record as unknown as AdminClaims;
+  return {
+    ...record,
+    username: record.username.trim() || 'Sub2API admin',
+  } as unknown as AdminClaims;
 }
 
 export async function exchangeAdminLaunchTicket(
