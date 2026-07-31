@@ -134,13 +134,13 @@ test('verification rejects wrong algorithm, issuer, audience, expiry, and missin
   }
 });
 
-test('admin session uses an isolated fixed JWT contract and an 8 hour default', async () => {
+test('admin session uses an isolated fixed JWT contract and a 3 day default', async () => {
   const token = await createAdminSession(adminClaims, undefined, validEnvironment);
   const header = decodeProtectedHeader(token);
   const payload = decodeJwt(token);
 
   assert.equal(ADMIN_SESSION_COOKIE_NAME, 'rsm_admin_session');
-  assert.equal(ADMIN_SESSION_MAX_AGE, 24 * 60 * 60);
+  assert.equal(ADMIN_SESSION_MAX_AGE, 3 * 24 * 60 * 60);
   assert.equal(header.alg, 'HS256');
   assert.equal(payload.iss, ADMIN_SESSION_ISSUER);
   assert.equal(payload.aud, ADMIN_SESSION_AUDIENCE);
@@ -152,7 +152,7 @@ test('admin session uses an isolated fixed JWT contract and an 8 hour default', 
   assert.equal(payload.appId, ADMIN_APP_ID);
   assert.equal(typeof payload.csrfToken, 'string');
   assert.ok((payload.csrfToken as string).length >= 32);
-  assert.equal((payload.exp as number) - (payload.iat as number), 8 * 60 * 60);
+  assert.equal((payload.exp as number) - (payload.iat as number), 3 * 24 * 60 * 60);
   assert.deepEqual(Object.keys(payload).sort(), [
     'appId', 'aud', 'csrfToken', 'email', 'exp', 'iat', 'iss', 'purpose', 'role', 'userId',
     'username',
@@ -229,12 +229,12 @@ test('local and admin session tokens cannot cross their verification boundaries'
 
 test('admin session cookie has hardened root-scoped attributes', async () => {
   const response = NextResponse.next();
-  attachAdminSession(response, 'signed-admin-session', 600, 'production');
+  attachAdminSession(response, 'signed-admin-session', 3 * 24 * 60 * 60, 'production');
   const cookie = response.headers.get('set-cookie') ?? '';
 
   assert.match(cookie, /^rsm_admin_session=signed-admin-session;/);
   assert.match(cookie, /Path=\//);
-  assert.match(cookie, /Max-Age=600/);
+  assert.match(cookie, /Max-Age=259200/);
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /Secure/);
   assert.match(cookie, /SameSite=lax/i);

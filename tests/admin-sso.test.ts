@@ -66,14 +66,14 @@ test('admin sso rejects missing, weak, and non-fixed exchange configuration', ()
   assert.equal(ADMIN_EXCHANGE_PATH, '/api/v1/external-apps/upstream-monitor/exchange');
 });
 
-test('admin sso resolves an 8 hour default TTL with a 24 hour maximum', () => {
-  assert.equal(resolveAdminSsoConfig(validEnvironment).sessionTtlSeconds, 8 * 60 * 60);
+test('admin sso resolves a 3 day default TTL with a 3 day maximum', () => {
+  assert.equal(resolveAdminSsoConfig(validEnvironment).sessionTtlSeconds, 3 * 24 * 60 * 60);
   assert.equal(resolveAdminSsoConfig({
     ...validEnvironment,
-    RSM_ADMIN_SESSION_TTL_SECONDS: String(24 * 60 * 60),
-  }).sessionTtlSeconds, 24 * 60 * 60);
+    RSM_ADMIN_SESSION_TTL_SECONDS: String(3 * 24 * 60 * 60),
+  }).sessionTtlSeconds, 3 * 24 * 60 * 60);
 
-  for (const ttl of ['0', '1.5', String(24 * 60 * 60 + 1), 'not-a-number']) {
+  for (const ttl of ['0', '1.5', String(3 * 24 * 60 * 60 + 1), 'not-a-number']) {
     assert.throws(() => resolveAdminSsoConfig({
       ...validEnvironment,
       RSM_ADMIN_SESSION_TTL_SECONDS: ttl,
