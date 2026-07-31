@@ -27,20 +27,21 @@ test('full account sync retires missing accounts without deleting history and is
       { source_account_id: '', name: 'Dirty', remote_status: 'active', priority: 50 },
       { source_account_id: 'dirty-rate', name: 'Dirty Rate', remote_status: 'active', priority: 50, probe_resolved_rate_multiplier: 'not-a-decimal' },
       { source_account_id: 'dirty-priority', name: 'Dirty Priority', remote_status: 'active', priority: -1 },
+      { source_account_id: 'over-priority', name: 'Over Priority', remote_status: 'active', priority: 1_000_001 },
     ],
     $disconnect: async () => {},
   };
 
   const result = await syncSub2ApiAccounts(read as never, monitor as never);
 
-  assert.deepEqual(result, { readCount: 4, ignoredCount: 3 });
+  assert.deepEqual(result, { readCount: 5, ignoredCount: 4 });
   assert.equal(upserts.length, 1);
   assert.equal((upserts[0].create as { priority?: number }).priority, 7);
   assert.equal(deleted, false);
   const retirement = updates.find((entry) => JSON.stringify(entry).includes('notIn'));
   assert.ok(retirement, 'missing accounts must be retired with updateMany');
   assert.match(JSON.stringify(retirement), /RETIRED/);
-  assert.deepEqual(((retirement.where as { sourceAccountId: { notIn: string[] } }).sourceAccountId.notIn), ['active-1', 'dirty-rate', 'dirty-priority']);
+  assert.deepEqual(((retirement.where as { sourceAccountId: { notIn: string[] } }).sourceAccountId.notIn), ['active-1', 'dirty-rate', 'dirty-priority', 'over-priority']);
 });
 
 test('first import of an inactive account sets retiredAt and a write failure closes the run as FAILED', async () => {
@@ -74,4 +75,14 @@ test('account priority uses an additive non-null migration with the Sub2API defa
   assert.match(schema, /priority\s+Int\s+@default\(50\)/);
   assert.match(migration, /ADD COLUMN "priority" INTEGER NOT NULL DEFAULT 50/);
   assert.doesNotMatch(migration, /DROP|DELETE|TRUNCATE/i);
+});
+
+test('account priority cap migration normalizes existing rows before adding the upper check', () => {
+  const migration = readFileSync(new URL('../prisma/migrations/20260731223000_cap_account_priority/migration.sql', import.meta.url), 'utf8');
+  assert.match(migration, /UPDATE "AccountPriorityAdjustment" AS adjustment/);
+  assert.match(migration, /"appliedFactors" = ARRAY\[\]::INTEGER\[\]/);
+  assert.match(migration, /"status" = 'RESTORED'/);
+  assert.match(migration, /UPDATE "Sub2ApiAccount"\s+SET "priority" = 1000000\s+WHERE "priority" > 1000000/);
+  assert.match(migration, /CHECK \("priority" >= 0 AND "priority" <= 1000000\)/);
+  assert.doesNotMatch(migration, /DELETE|TRUNCATE/i);
 });

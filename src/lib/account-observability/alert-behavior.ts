@@ -1,3 +1,5 @@
+import { isAccountPriority, MAX_ACCOUNT_PRIORITY } from '../account-priority';
+
 export interface AlertBehaviorSettings {
   confirmationWindowMinutes: number;
   confirmationCount: number;
@@ -13,7 +15,6 @@ export interface AlertCandidateState {
 const MAX_WINDOW_MINUTES = 60;
 const MAX_CONFIRMATION_COUNT = 20;
 const MAX_PRIORITY_FACTOR = 1_000;
-const MAX_PRIORITY = 2_147_483_647;
 
 function integerSetting(value: unknown, fallback: number, min: number, max: number, name: string): number {
   if (value == null || value === '') return fallback;
@@ -54,17 +55,19 @@ export function calculateAdjustedPriority(currentPriority: number, factor: numbe
   basePriority: number;
   adjustedPriority: number;
 } {
-  if (!Number.isSafeInteger(currentPriority)) throw new Error('invalid priority');
+  if (!isAccountPriority(currentPriority)) throw new Error('invalid priority');
   if (!Number.isSafeInteger(factor) || factor < 0) throw new Error('invalid priority factor');
   const basePriority = Math.max(1, currentPriority);
   if (factor === 0) return { enabled: false, basePriority, adjustedPriority: basePriority };
   const adjustedPriority = basePriority * factor;
-  if (!Number.isSafeInteger(adjustedPriority) || adjustedPriority > MAX_PRIORITY) throw new Error('priority overflow');
+  if (!Number.isSafeInteger(adjustedPriority) || adjustedPriority > MAX_ACCOUNT_PRIORITY) {
+    return { enabled: false, basePriority, adjustedPriority: basePriority };
+  }
   return { enabled: true, basePriority, adjustedPriority: Math.max(1, adjustedPriority) };
 }
 
 export function calculateRestoredPriority(currentPriority: number, factor: number): number {
-  if (!Number.isSafeInteger(currentPriority) || currentPriority < 0) throw new Error('invalid priority');
+  if (!isAccountPriority(currentPriority)) throw new Error('invalid priority');
   if (!Number.isSafeInteger(factor) || factor < 1) throw new Error('invalid priority factor');
   return Math.max(1, Math.floor(currentPriority / factor));
 }

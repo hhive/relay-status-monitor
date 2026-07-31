@@ -1,3 +1,5 @@
+import { isAccountPriority } from '../account-priority';
+
 const PRIORITY_PATH = '/api/v1/internal/relay-monitor/accounts';
 
 export class Sub2ApiPriorityError extends Error {
@@ -17,7 +19,7 @@ function accountId(value: string): string {
 }
 
 function priority(value: unknown, minimum: number): number {
-  if (!Number.isSafeInteger(value) || Number(value) < minimum || Number(value) > 2_147_483_647) {
+  if (!isAccountPriority(value, minimum)) {
     throw new Sub2ApiPriorityError('invalid_priority_response');
   }
   return Number(value);

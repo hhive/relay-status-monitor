@@ -17,6 +17,20 @@ test('priority client sends the dedicated secret and returns conflict priority w
     error instanceof Sub2ApiPriorityError && error.code === 'priority_conflict' && error.currentPriority === 55);
   assert.equal(requests[0].url, 'http://127.0.0.1:8080/api/v1/internal/relay-monitor/accounts/7/priority');
   assert.equal((requests[0].init?.headers as Record<string, string>)['X-Sub2API-Relay-Monitor-Secret'], '0123456789abcdef0123456789abcdef');
+  await assert.rejects(client.setPriority('7', 50, 1_000_001), (error: unknown) =>
+    error instanceof Sub2ApiPriorityError && error.code === 'invalid_priority_response');
+  assert.equal(requests.length, 1, 'an over-limit target must fail before the request');
+});
+
+test('priority client rejects an over-limit upstream response', async () => {
+  const client = createSub2ApiPriorityClient({
+    baseUrl: 'http://127.0.0.1:8080', secret: '0123456789abcdef0123456789abcdef',
+    fetchImpl: (async () => new Response(JSON.stringify({ priority: 1_000_001 }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })) as typeof fetch,
+  });
+  await assert.rejects(client.getPriority('7'), (error: unknown) =>
+    error instanceof Sub2ApiPriorityError && error.code === 'invalid_priority_response');
 });
 
 test('priority coordinator multiplies every confirmed layer and divides every recovered layer', async () => {
@@ -83,6 +97,32 @@ test('priority coordinator stores each layer factor and restores in reverse orde
   await coordinator.restore(7);
   assert.equal(remotePriority, 5);
   assert.equal(stored.status, 'RESTORED');
+});
+
+test('priority coordinator records an over-limit layer as a reversible no-op', async () => {
+  let stored: PriorityAdjustmentRecord | null = null;
+  let activeSignals = 1;
+  let writeCount = 0;
+  const repository: PriorityAdjustmentRepository = {
+    find: async () => stored,
+    save: async (record) => { stored = { ...record }; },
+    countActiveSignals: async () => activeSignals,
+    listUnsettled: async () => stored ? [stored] : [],
+  };
+  const coordinator = createPriorityCoordinator(repository, {
+    getPriority: async () => 900_000,
+    setPriority: async () => { writeCount += 1; return 900_000; },
+  });
+
+  await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10);
+  assert.equal(writeCount, 0);
+  assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, [0]);
+
+  activeSignals = 0;
+  await coordinator.restore(7);
+  assert.equal(writeCount, 0);
+  assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, []);
+  assert.equal((stored as PriorityAdjustmentRecord | null)?.status, 'RESTORED');
 });
 
 test('priority coordinator retries a failed new layer with its persisted factor', async () => {

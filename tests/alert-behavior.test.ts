@@ -56,7 +56,8 @@ test('priority adjustment enforces minimum one and factor zero disables writes',
   assert.deepEqual(calculateAdjustedPriority(5, 10), { enabled: true, basePriority: 5, adjustedPriority: 50 });
   assert.deepEqual(calculateAdjustedPriority(0, 10), { enabled: true, basePriority: 1, adjustedPriority: 10 });
   assert.deepEqual(calculateAdjustedPriority(5, 0), { enabled: false, basePriority: 5, adjustedPriority: 5 });
-  assert.throws(() => calculateAdjustedPriority(214_748_365, 10), /overflow/i);
+  assert.deepEqual(calculateAdjustedPriority(900_000, 10), { enabled: false, basePriority: 900_000, adjustedPriority: 900_000 });
+  assert.throws(() => calculateAdjustedPriority(1_000_001, 1), /invalid priority/i);
   assert.equal(calculateRestoredPriority(55, 10), 5, 'manual changes are the recovery calculation baseline');
   assert.equal(calculateRestoredPriority(5, 10), 1, 'recovery never writes below one');
 });

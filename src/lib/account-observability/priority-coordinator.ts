@@ -88,6 +88,20 @@ export function createPriorityCoordinator(
       await repository.save(record);
       const current = await client.getPriority(record.sourceAccountId);
       const calculated = calculateAdjustedPriority(current, factor);
+      if (!calculated.enabled) {
+        record = {
+          ...record,
+          expectedPriority: null,
+          basePriority: null,
+          adjustedPriority: null,
+          appliedFactors: [...record.appliedFactors, 0],
+          factor,
+          status: 'ACTIVE',
+          lastError: null,
+        };
+        await repository.save(record);
+        return record;
+      }
       record = {
         ...record,
         expectedPriority: current,
@@ -108,6 +122,20 @@ export function createPriorityCoordinator(
       if (!(error instanceof Sub2ApiPriorityError) || error.code !== 'priority_conflict' || error.currentPriority == null) throw error;
       conflictRecalculated = true;
       const recalculated = calculateAdjustedPriority(error.currentPriority, factor);
+      if (!recalculated.enabled) {
+        record = {
+          ...record,
+          expectedPriority: null,
+          basePriority: null,
+          adjustedPriority: null,
+          appliedFactors: [...record.appliedFactors, 0],
+          factor,
+          status: 'ACTIVE',
+          lastError: null,
+        };
+        await repository.save(record);
+        return record;
+      }
       record = { ...record, expectedPriority: error.currentPriority, basePriority: recalculated.basePriority, adjustedPriority: recalculated.adjustedPriority };
       await repository.save(record);
       await client.setPriority(record.sourceAccountId, record.expectedPriority!, record.adjustedPriority!);

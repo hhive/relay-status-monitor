@@ -1,3 +1,5 @@
+import { isAccountPriority } from '../account-priority';
+
 export interface RemoteAccountState {
   status: string | null;
   schedulable: boolean | null;
@@ -49,7 +51,7 @@ function isValidProjection(row: AccountProjection): boolean {
   const validDate = row.remote_updated_at == null ||
     (row.remote_updated_at instanceof Date && Number.isFinite(row.remote_updated_at.getTime()));
   const dateStrings = [row.probe_received_at, row.probe_fresh_until, row.probe_next_at];
-  return Boolean(row.source_account_id && row.name) && Number.isSafeInteger(row.priority) && row.priority >= 0 &&
+  return Boolean(row.source_account_id && row.name) && isAccountPriority(row.priority) &&
     dateStrings.every((value) => value == null || Number.isFinite(Date.parse(value))) &&
     decimal(row.probe_resolved_rate_multiplier) && decimal(row.probe_peak_rate_multiplier) && validDate;
 }
