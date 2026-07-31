@@ -5,12 +5,13 @@ import {
   ADMIN_APP_ID,
   ADMIN_EXCHANGE_PATH,
   ADMIN_EXCHANGE_TIMEOUT_MS,
+  adminSsoFailureReason,
   exchangeAdminLaunchTicket,
   resolveAdminSsoConfig,
   validateAdminClaims,
   type AdminClaims,
 } from '../src/lib/admin-sso';
-import { createAdminLaunchHandler } from '../src/lib/admin-launch';
+import { createAdminLaunchHandler, type AdminLaunchDependencies, type AdminLaunchFailure } from '../src/lib/admin-launch';
 import { attachAdminSession, createAdminSession } from '../src/lib/admin-session-token';
 
 const strongSecret = 'admin-exchange-secret-for-tests-only';
@@ -130,6 +131,27 @@ test('admin sso exchange requires the exact Sub2API success envelope', async () 
   }
 });
 
+test('admin sso exposes only fixed internal failure reasons', async () => {
+  let configurationError: unknown;
+  try { resolveAdminSsoConfig({}); } catch (error) { configurationError = error; }
+  assert.equal(adminSsoFailureReason(configurationError), 'configuration_invalid');
+
+  for (const [response, expected] of [
+    [new Response('{}', { status: 502 }), 'exchange_request_failed'],
+    [new Response('not-json'), 'exchange_response_invalid'],
+    [Response.json({ code: 0, message: 'success', data: { ...validClaims, role: 'user' } }), 'claims_invalid'],
+  ] as const) {
+    let failure: unknown;
+    try {
+      await exchangeAdminLaunchTicket('one-time-ticket', {
+        environment: validEnvironment, fetchImpl: async () => response, nowSeconds,
+      });
+    } catch (error) { failure = error; }
+    assert.equal(adminSsoFailureReason(failure), expected);
+  }
+  assert.equal(adminSsoFailureReason(new Error('secret-canary upstream-body-canary')), 'unexpected_failure');
+});
+
 test('admin sso accepts only exact, current administrator claims', () => {
   assert.deepEqual(validateAdminClaims(validClaims, nowSeconds), validClaims);
 
@@ -215,6 +237,7 @@ test('admin sso landing can sign and attach the real isolated admin cookie', asy
 
 test('admin sso landing returns one redacted 401 response for invalid or failed launches', async () => {
   const canaries = ['ticket-canary', 'secret-canary', 'upstream-body-canary'];
+  const failures: AdminLaunchFailure[] = [];
   let exchangeCalls = 0;
   const handler = createAdminLaunchHandler({
     exchangeAdminTicket: async () => {
@@ -227,6 +250,7 @@ test('admin sso landing returns one redacted 401 response for invalid or failed 
     attachAdminSession: () => {
       throw new Error('must not be reached');
     },
+    onFailure: (failure) => { failures.push(failure); },
   });
 
   const urls = [
@@ -245,4 +269,33 @@ test('admin sso landing returns one redacted 401 response for invalid or failed 
     for (const canary of canaries) assert.doesNotMatch(body, new RegExp(canary));
   }
   assert.equal(exchangeCalls, 1);
+  assert.deepEqual(failures, [
+    { event: 'relay_monitor_admin_sso_failed', stage: 'token_validation', reason: 'invalid_launch_token' },
+    { event: 'relay_monitor_admin_sso_failed', stage: 'token_validation', reason: 'invalid_launch_token' },
+    { event: 'relay_monitor_admin_sso_failed', stage: 'token_validation', reason: 'invalid_launch_token' },
+    { event: 'relay_monitor_admin_sso_failed', stage: 'ticket_exchange', reason: 'unexpected_failure' },
+  ]);
+  for (const canary of canaries) assert.doesNotMatch(JSON.stringify(failures), new RegExp(canary));
+});
+
+test('admin sso landing distinguishes session creation and attachment failures', async () => {
+  const failures: AdminLaunchFailure[] = [];
+  const dependencies: AdminLaunchDependencies = {
+    exchangeAdminTicket: async () => ({ claims: validClaims, sessionTtlSeconds: 600 }),
+    createAdminSession: async () => { throw new Error('session-secret-canary'); },
+    attachAdminSession: () => undefined,
+    onFailure: (failure) => { failures.push(failure); },
+  };
+  const request = () => new Request('https://monitor.example.test/api/sub2api/admin-launch?token=one-time-ticket');
+
+  assert.equal((await createAdminLaunchHandler(dependencies)(request())).status, 401);
+  dependencies.createAdminSession = async () => 'signed-session';
+  dependencies.attachAdminSession = () => { throw new Error('cookie-canary'); };
+  assert.equal((await createAdminLaunchHandler(dependencies)(request())).status, 401);
+
+  assert.deepEqual(failures, [
+    { event: 'relay_monitor_admin_sso_failed', stage: 'session_creation', reason: 'unexpected_failure' },
+    { event: 'relay_monitor_admin_sso_failed', stage: 'session_attachment', reason: 'unexpected_failure' },
+  ]);
+  assert.doesNotMatch(JSON.stringify(failures), /canary/);
 });

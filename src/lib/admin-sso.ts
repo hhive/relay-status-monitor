@@ -18,6 +18,19 @@ const EXCHANGE_RESPONSE_KEYS = ['code', 'data', 'message'] as const;
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
+export type AdminSsoFailureReason =
+  | 'configuration_invalid'
+  | 'exchange_request_failed'
+  | 'exchange_response_invalid'
+  | 'claims_invalid'
+  | 'unexpected_failure';
+
+class AdminSsoFailure extends Error {
+  constructor(readonly reason: Exclude<AdminSsoFailureReason, 'unexpected_failure'>, message: string) {
+    super(message);
+  }
+}
+
 export interface AdminClaims {
   user_id: number;
   email: string;
@@ -41,16 +54,20 @@ export interface AdminExchangeOptions {
 }
 
 function invalidConfiguration(): never {
-  throw new Error('Admin SSO configuration invalid');
+  throw new AdminSsoFailure('configuration_invalid', 'Admin SSO configuration invalid');
 }
 
 function invalidClaims(): never {
-  throw new Error('Admin SSO claims invalid');
+  throw new AdminSsoFailure('claims_invalid', 'Admin SSO claims invalid');
+}
+
+export function adminSsoFailureReason(error: unknown): AdminSsoFailureReason {
+  return error instanceof AdminSsoFailure ? error.reason : 'unexpected_failure';
 }
 
 function extractExchangeClaims(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Admin SSO exchange failed');
+    throw new AdminSsoFailure('exchange_response_invalid', 'Admin SSO exchange failed');
   }
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record).sort();
@@ -60,7 +77,7 @@ function extractExchangeClaims(value: unknown): unknown {
     record.code !== 0 ||
     record.message !== 'success'
   ) {
-    throw new Error('Admin SSO exchange failed');
+    throw new AdminSsoFailure('exchange_response_invalid', 'Admin SSO exchange failed');
   }
   return record.data;
 }
@@ -151,23 +168,30 @@ export async function exchangeAdminLaunchTicket(
   options: AdminExchangeOptions = {},
 ): Promise<AdminClaims> {
   const config = resolveAdminSsoConfig(options.environment);
-  const response = await (options.fetchImpl ?? fetch)(config.exchangeUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Sub2API-External-App-Secret': config.exchangeSecret,
-    },
-    body: JSON.stringify({ token }),
-    redirect: 'error',
-    signal: AbortSignal.timeout(ADMIN_EXCHANGE_TIMEOUT_MS),
-  });
-  if (!response.ok) throw new Error('Admin SSO exchange failed');
+  let response: Response;
+  try {
+    response = await (options.fetchImpl ?? fetch)(config.exchangeUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sub2API-External-App-Secret': config.exchangeSecret,
+      },
+      body: JSON.stringify({ token }),
+      redirect: 'error',
+      signal: AbortSignal.timeout(ADMIN_EXCHANGE_TIMEOUT_MS),
+    });
+  } catch {
+    throw new AdminSsoFailure('exchange_request_failed', 'Admin SSO exchange failed');
+  }
+  if (!response.ok) {
+    throw new AdminSsoFailure('exchange_request_failed', 'Admin SSO exchange failed');
+  }
 
   let body: unknown;
   try {
     body = await response.json();
   } catch {
-    throw new Error('Admin SSO exchange failed');
+    throw new AdminSsoFailure('exchange_response_invalid', 'Admin SSO exchange failed');
   }
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000);
   return validateAdminClaims(extractExchangeClaims(body), nowSeconds);

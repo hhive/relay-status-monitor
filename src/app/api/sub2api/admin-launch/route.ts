@@ -13,6 +13,9 @@ const defaultDependencies: AdminLaunchDependencies = {
   },
   createAdminSession,
   attachAdminSession,
+  onFailure(failure) {
+    if (failure.stage !== 'token_validation') console.warn(JSON.stringify(failure));
+  },
 };
 
 export const GET = createAdminLaunchHandler(defaultDependencies);
