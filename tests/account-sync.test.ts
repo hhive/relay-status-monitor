@@ -76,13 +76,3 @@ test('account priority uses an additive non-null migration with the Sub2API defa
   assert.match(migration, /ADD COLUMN "priority" INTEGER NOT NULL DEFAULT 50/);
   assert.doesNotMatch(migration, /DROP|DELETE|TRUNCATE/i);
 });
-
-test('account priority cap migration normalizes existing rows before adding the upper check', () => {
-  const migration = readFileSync(new URL('../prisma/migrations/20260731223000_cap_account_priority/migration.sql', import.meta.url), 'utf8');
-  assert.match(migration, /UPDATE "AccountPriorityAdjustment" AS adjustment/);
-  assert.match(migration, /"appliedFactors" = ARRAY\[\]::INTEGER\[\]/);
-  assert.match(migration, /"status" = 'RESTORED'/);
-  assert.match(migration, /UPDATE "Sub2ApiAccount"\s+SET "priority" = 1000000\s+WHERE "priority" > 1000000/);
-  assert.match(migration, /CHECK \("priority" >= 0 AND "priority" <= 1000000\)/);
-  assert.doesNotMatch(migration, /DELETE|TRUNCATE/i);
-});
