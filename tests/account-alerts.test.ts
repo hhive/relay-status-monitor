@@ -522,6 +522,8 @@ test('account alert master switch off suppresses every rule including multiplier
   await off.evaluate(new Date('2026-07-25T12:00:00Z'));
   assert.equal(off.created.length, 0);
   assert.deepEqual(off.notified, []);
+  assert.deepEqual(off.priorityAdjusted, []);
+  assert.deepEqual(off.priorityRestored, []);
 
   const on = harness({
     rules: [availabilityRule, multiplierRule],

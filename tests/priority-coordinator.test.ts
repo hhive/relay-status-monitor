@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createPriorityCoordinator, type PriorityAdjustmentRecord, type PriorityAdjustmentRepository } from '../src/lib/account-observability/priority-coordinator';
+import { createPriorityCoordinator, type PriorityAdjustmentRecord, type PriorityAdjustmentRepository, type PriorityChangeLogEntry } from '../src/lib/account-observability/priority-coordinator';
 import { createSub2ApiPriorityClient, Sub2ApiPriorityError, type Sub2ApiPriorityClient } from '../src/lib/account-observability/sub2api-priority-client';
 
 test('priority client sends the dedicated secret and returns conflict priority without response details', async () => {
@@ -136,4 +136,57 @@ test('priority coordinator restores applied layers when the account has no enabl
   await coordinator.retry(new Map([[7, { id: 7, sourceAccountId: '9', priorityEligible: false }]]), 10);
   assert.equal(remotePriority, 5);
   assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, []);
+});
+
+test('priority coordinator logs only successful writes with recalculated CAS values', async () => {
+  let stored: PriorityAdjustmentRecord | null = null;
+  let activeSignals = 1;
+  let remotePriority = 5;
+  let failWrite = false;
+  let conflictAfterRead = false;
+  const logs: PriorityChangeLogEntry[] = [];
+  const repository: PriorityAdjustmentRepository = {
+    find: async () => stored,
+    save: async (record) => { stored = { ...record }; },
+    countActiveSignals: async () => activeSignals,
+    listUnsettled: async () => stored ? [stored] : [],
+  };
+  const coordinator = createPriorityCoordinator(repository, {
+    getPriority: async () => {
+      const current = remotePriority;
+      if (conflictAfterRead) {
+        remotePriority = 55;
+        conflictAfterRead = false;
+      }
+      return current;
+    },
+    setPriority: async (_id, expected, target) => {
+      if (failWrite) throw new Sub2ApiPriorityError('priority_http_503');
+      if (remotePriority !== expected) throw new Sub2ApiPriorityError('priority_conflict', remotePriority);
+      remotePriority = target;
+      return target;
+    },
+  }, (entry) => { logs.push(entry); });
+
+  await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10);
+  assert.deepEqual(logs[0], {
+    event: 'relay_monitor_priority_changed', accountId: 7, sourceAccountId: '9',
+    direction: 'adjust', previousPriority: 5, targetPriority: 50, factor: 10,
+    conflictRecalculated: false,
+  });
+
+  remotePriority = 50;
+  conflictAfterRead = true;
+  activeSignals = 0;
+  await coordinator.restore(7);
+  assert.deepEqual(logs[1], {
+    event: 'relay_monitor_priority_changed', accountId: 7, sourceAccountId: '9',
+    direction: 'restore', previousPriority: 55, targetPriority: 5, factor: 10,
+    conflictRecalculated: true,
+  });
+
+  activeSignals = 1;
+  failWrite = true;
+  await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10);
+  assert.equal(logs.length, 2, 'a failed write must not be logged as a priority change');
 });

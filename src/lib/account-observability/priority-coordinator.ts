@@ -23,6 +23,19 @@ export interface PriorityAdjustmentRepository {
   listUnsettled(): Promise<PriorityAdjustmentRecord[]>;
 }
 
+export interface PriorityChangeLogEntry {
+  event: 'relay_monitor_priority_changed';
+  accountId: number;
+  sourceAccountId: string;
+  direction: 'adjust' | 'restore';
+  previousPriority: number;
+  targetPriority: number;
+  factor: number;
+  conflictRecalculated: boolean;
+}
+
+export type PriorityChangeLogger = (entry: PriorityChangeLogEntry) => void;
+
 function errorCode(error: unknown): string {
   return error instanceof Sub2ApiPriorityError ? error.code : 'priority_request_failed';
 }
@@ -43,7 +56,15 @@ function emptyRecord(account: { id: number; sourceAccountId: string }, factor: n
   };
 }
 
-export function createPriorityCoordinator(repository: PriorityAdjustmentRepository, client: Sub2ApiPriorityClient) {
+export function createPriorityCoordinator(
+  repository: PriorityAdjustmentRepository,
+  client: Sub2ApiPriorityClient,
+  logPriorityChange: PriorityChangeLogger = () => undefined,
+) {
+  const logSuccessfulChange = (entry: PriorityChangeLogEntry): void => {
+    try { logPriorityChange(entry); } catch { /* Logging must not invalidate a completed remote write. */ }
+  };
+
   const applyAdjustment = async (input: PriorityAdjustmentRecord, requestedFactor: number): Promise<PriorityAdjustmentRecord> => {
     let record = input;
     const factor = ['PENDING', 'FAILED_ADJUST'].includes(record.status) ? record.factor : requestedFactor;
@@ -80,15 +101,23 @@ export function createPriorityCoordinator(repository: PriorityAdjustmentReposito
       };
       await repository.save(record);
     }
+    let conflictRecalculated = false;
     try {
       await client.setPriority(record.sourceAccountId, record.expectedPriority!, record.adjustedPriority!);
     } catch (error) {
       if (!(error instanceof Sub2ApiPriorityError) || error.code !== 'priority_conflict' || error.currentPriority == null) throw error;
+      conflictRecalculated = true;
       const recalculated = calculateAdjustedPriority(error.currentPriority, factor);
       record = { ...record, expectedPriority: error.currentPriority, basePriority: recalculated.basePriority, adjustedPriority: recalculated.adjustedPriority };
       await repository.save(record);
       await client.setPriority(record.sourceAccountId, record.expectedPriority!, record.adjustedPriority!);
     }
+    logSuccessfulChange({
+      event: 'relay_monitor_priority_changed', accountId: record.accountId,
+      sourceAccountId: record.sourceAccountId, direction: 'adjust',
+      previousPriority: record.expectedPriority!, targetPriority: record.adjustedPriority!,
+      factor, conflictRecalculated,
+    });
     record = {
       ...record,
       appliedFactors: [...record.appliedFactors, factor],
@@ -137,10 +166,12 @@ export function createPriorityCoordinator(repository: PriorityAdjustmentReposito
       };
       await repository.save(record);
     }
+    let conflictRecalculated = false;
     try {
       await client.setPriority(record.sourceAccountId, record.restoreExpectedPriority!, record.restoreTargetPriority!);
     } catch (error) {
       if (!(error instanceof Sub2ApiPriorityError) || error.code !== 'priority_conflict' || error.currentPriority == null) throw error;
+      conflictRecalculated = true;
       record = {
         ...record,
         restoreExpectedPriority: error.currentPriority,
@@ -149,6 +180,12 @@ export function createPriorityCoordinator(repository: PriorityAdjustmentReposito
       await repository.save(record);
       await client.setPriority(record.sourceAccountId, record.restoreExpectedPriority!, record.restoreTargetPriority!);
     }
+    logSuccessfulChange({
+      event: 'relay_monitor_priority_changed', accountId: record.accountId,
+      sourceAccountId: record.sourceAccountId, direction: 'restore',
+      previousPriority: record.restoreExpectedPriority!, targetPriority: record.restoreTargetPriority!,
+      factor, conflictRecalculated,
+    });
     const appliedFactors = record.appliedFactors.slice(0, -1);
     record = {
       ...record,
@@ -216,7 +253,11 @@ const repository: PriorityAdjustmentRepository = {
 
 let productionCoordinator: ReturnType<typeof createPriorityCoordinator> | null = null;
 function coordinator() {
-  productionCoordinator ??= createPriorityCoordinator(repository, createSub2ApiPriorityClient());
+  productionCoordinator ??= createPriorityCoordinator(
+    repository,
+    createSub2ApiPriorityClient(),
+    (entry) => { console.info(JSON.stringify(entry)); },
+  );
   return productionCoordinator;
 }
 
