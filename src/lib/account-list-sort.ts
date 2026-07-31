@@ -5,6 +5,7 @@ export const ACCOUNT_SORT_KEYS = [
   'account',
   'platformGroup',
   'schedulable',
+  'priority',
   'availability',
   'durationP95Ms',
   'firstTokenP95Ms',
@@ -30,6 +31,7 @@ export const ACCOUNT_SORT_LABELS: Record<AccountSortKey, string> = {
   account: '账号',
   platformGroup: '平台 / 分组',
   schedulable: '调度',
+  priority: '优先级',
   availability: '可用率',
   durationP95Ms: '总延迟 P95',
   firstTokenP95Ms: '首 Token P95',
@@ -165,6 +167,9 @@ function comparePrimary(left: SortableAccount, right: SortableAccount, state: Ac
   }
   if (key === 'schedulable') {
     return compareNullable(left.schedulable, right.schedulable, (a, b) => compareNumber(Number(a), Number(b)), order);
+  }
+  if (key === 'priority') {
+    return compareNullable(left.priority, right.priority, compareNumber, order);
   }
   if (key === 'sync') {
     const leftSyncedAt = timestamp(left.lastSyncedAt);

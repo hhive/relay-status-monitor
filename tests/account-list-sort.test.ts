@@ -14,7 +14,7 @@ import {
 
 test('keeps the complete server sort whitelist and default', () => {
   assert.deepEqual(ACCOUNT_SORT_KEYS, [
-    'account', 'platformGroup', 'schedulable', 'availability',
+    'account', 'platformGroup', 'schedulable', 'priority', 'availability',
     'durationP95Ms', 'firstTokenP95Ms', 'cacheHitRate', 'userBilledUsd',
     'accountBilledUsd', 'balanceUsd', 'upstreamRateMultiplier', 'eligibleCount', 'sync', 'alertEnabled',
   ]);

@@ -12,9 +12,9 @@ function source(path: string): string {
 }
 
 const accounts = [
-  { id: 1, name: 'Alpha', platform: 'openai', syncState: 'ACTIVE', schedulable: true, groupProjection: [{ id: 7, name: 'Premium' }] },
-  { id: 2, name: 'Beta', platform: 'anthropic', syncState: 'ACTIVE', schedulable: false, alertEnabled: false, groupProjection: [{ id: 8, name: 'Fallback' }] },
-  { id: 3, name: 'Retired', platform: 'openai', syncState: 'RETIRED', schedulable: false, groupProjection: [] },
+  { id: 1, name: 'Alpha', platform: 'openai', syncState: 'ACTIVE', schedulable: true, priority: 5, groupProjection: [{ id: 7, name: 'Premium' }] },
+  { id: 2, name: 'Beta', platform: 'anthropic', syncState: 'ACTIVE', schedulable: false, priority: 50, alertEnabled: false, groupProjection: [{ id: 8, name: 'Fallback' }] },
+  { id: 3, name: 'Retired', platform: 'openai', syncState: 'RETIRED', schedulable: false, priority: 100, groupProjection: [] },
 ];
 
 test('server windows end at the latest complete minute and reject unknown keys', () => {
@@ -77,6 +77,7 @@ test('overview aggregates raw counts and histograms and reports coverage for the
   assert.equal(result.summary.promptTokens, '130');
   assert.equal(result.summary.selectedAccountCount, 2);
   assert.equal(result.summary.schedulableAccountCount, 1);
+  assert.equal(result.accounts[0].priority, 5);
   assert.deepEqual(result.coverage, {
     earliestBucket: new Date('2026-07-25T12:00:00Z'), latestBucket: new Date('2026-07-25T12:00:00Z'),
     expectedMinutes: 2, actualMinutes: 1, missingMinutes: 1, complete: false, status: 'gap',

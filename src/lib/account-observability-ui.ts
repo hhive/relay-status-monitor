@@ -63,6 +63,7 @@ export interface AccountSummaryDto {
   type: string | null;
   remoteStatus: string | null;
   schedulable: boolean | null;
+  priority: number;
   syncState: string;
   groupProjection: unknown;
   lastSyncedAt: string | null;
@@ -87,6 +88,7 @@ export interface AccountListItemDto {
   type: string | null;
   remoteStatus: string | null;
   schedulable: boolean | null;
+  priority: number;
   syncState: string;
   groupProjection: unknown;
   lastSyncedAt: string | null;

@@ -57,6 +57,7 @@ model Sub2ApiAccount {
   type                       String?
   remoteStatus               String?
   schedulable                Boolean?
+  priority                   Int                    @default(50)
   rateLimitedAt              DateTime?
   rateLimitResetAt           DateTime?
   overloadUntil              DateTime?

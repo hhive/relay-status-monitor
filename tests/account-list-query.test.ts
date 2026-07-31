@@ -43,10 +43,10 @@ test('default list SQL requires at least one alert-enabled group', () => {
   assert.doesNotMatch(sqlText(all), /GroupAlertSetting/);
 });
 
-test('all fourteen sort keys use fixed SQL with NULLS LAST and deterministic account ties', () => {
+test('all fifteen sort keys use fixed SQL with NULLS LAST and deterministic account ties', () => {
   const input = parseAccountListQuery(new URLSearchParams('status=all'));
   const requestNow = new Date('2026-07-26T12:34:56.789Z');
-  assert.equal(ACCOUNT_SORT_KEYS.length, 14);
+  assert.equal(ACCOUNT_SORT_KEYS.length, 15);
   for (const key of ACCOUNT_SORT_KEYS) {
     for (const order of ['asc', 'desc'] as const) {
       const query = buildAccountListPageQuery({ ...input, sort: { key, order } }, 7, 0, requestNow);
@@ -75,6 +75,12 @@ test('sync sorting uses one request time and the same account and metric freshne
     new Date('2026-07-26T12:24:56.789Z'),
     new Date('2026-07-26T12:31:56.789Z'),
   ]);
+});
+
+test('priority sorting uses the synchronized local account projection', () => {
+  const input = parseAccountListQuery(new URLSearchParams('status=all&sortKey=priority&sortOrder=asc'));
+  const text = sqlText(buildAccountListPageQuery(input, 7, 0));
+  assert.match(text, /a\."priority" ASC NULLS LAST/);
 });
 
 test('list SQL uses exact group IDs, ordered JSON groups, snapshot-aware sorting, and a left join', () => {
@@ -131,7 +137,7 @@ test('account list runs batch, platform and group facets, count, and page in one
       order.push('page');
       return [{
         id: 9, name: 'New account', platform: 'openai', type: null, remoteStatus: null,
-        schedulable: true, syncState: 'ACTIVE', groupProjection: [], lastSyncedAt: null,
+        schedulable: true, priority: 7, syncState: 'ACTIVE', groupProjection: [], lastSyncedAt: null,
         alertEnabled: true, snapshotId: 77, eligibleCount: null, availability: null, errorRate: null,
         durationP95Ms: null, firstTokenP95Ms: null, cacheHitRate: null,
         userBilledUsd: null, accountBilledUsd: null, balanceUsd: null,
@@ -164,6 +170,7 @@ test('account list runs batch, platform and group facets, count, and page in one
   assert.match(queries[2], /lower\(a\."platform"\) = lower\(\?\)/i);
   assert.match(queries[3], /LEFT JOIN "AccountMetricSnapshot" s/);
   assert.equal(result.accounts[0].metrics.eligibleCount, 0);
+  assert.equal(result.accounts[0].priority, 7);
   assert.equal(result.accounts[0].metrics.userBilledUsd, '0.000000');
   assert.equal(result.accounts[0].metrics.accountBilledUsd, '0.000000');
   assert.equal(result.accounts[0].metrics.availability, null);

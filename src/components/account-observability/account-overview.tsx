@@ -395,11 +395,12 @@ function AccountList({ data, accounts, coverage, pageSize, onPageSizeChange, onP
     </div>
     {accounts.length === 0 ? <div className="rounded-md border py-12 text-center text-sm text-muted-foreground">暂无账号数据</div> : <>
     <div className="hidden overflow-x-auto rounded-md border md:block">
-      <table className="w-full min-w-[1180px] text-sm">
+      <table className="w-full min-w-[1240px] text-sm">
         <thead className="sticky top-0 z-10 bg-card shadow-[0_1px_0_hsl(var(--border))]"><tr className="text-left">
           <SortableAccountHeader sortKey="account" state={sortState} onSort={onSort} className="sticky left-0 z-20 w-56 min-w-56 max-w-56 bg-card shadow-[2px_0_0_hsl(var(--border))]" />
           <SortableAccountHeader sortKey="platformGroup" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="schedulable" state={sortState} onSort={onSort} />
+          <SortableAccountHeader sortKey="priority" state={sortState} onSort={onSort} />
           <SortableAccountHeader sortKey="availability" metric="availability" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="durationP95Ms" metric="durationP95Ms" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
           <SortableAccountHeader sortKey="firstTokenP95Ms" metric="firstTokenP95Ms" state={sortState} onSort={onSort} window={data.window} coverage={coverage} />
@@ -456,6 +457,7 @@ function AccountTableRow({ account, pending, onToggleAlert }: { account: Account
     <td className="sticky left-0 z-[1] w-56 min-w-56 max-w-56 bg-card px-3 py-3 shadow-[2px_0_0_hsl(var(--border))] group-hover:bg-muted/40"><Link href={`/accounts/${account.id}`} className="font-medium text-primary hover:underline">{account.name}</Link><div className="text-xs text-muted-foreground">{account.type ?? '未知类型'}</div></td>
     <td className="max-w-56 px-3 py-3"><div>{account.platform ?? '未知平台'}</div><div className="truncate text-xs text-muted-foreground">{formatAccountGroups(account.groupProjection)}</div></td>
     <td className="px-3 py-3"><Badge variant={account.schedulable ? 'outline' : 'destructive'}>{account.schedulable ? '可调度' : '不可调度'}</Badge></td>
+    <td className="whitespace-nowrap px-3 py-3 tabular-nums">{account.priority}</td>
     {ACCOUNT_LIST_METRICS.map((key) => <td key={key} className="whitespace-nowrap px-3 py-3 tabular-nums">{key === 'upstreamRateMultiplier'
       ? <CompactRateComparison api={metrics.upstreamApiRateMultiplier} estimated={metrics.upstreamEstimatedRateMultiplier} />
       : formatAccountMetric(key, metrics[key])}</td>)}
@@ -467,7 +469,7 @@ function AccountTableRow({ account, pending, onToggleAlert }: { account: Account
 function AccountMobileRow({ account, window, coverage, pending, onToggleAlert }: { account: AccountListItemDto; window: AccountWindowDto; coverage?: AccountCoverageDto; pending: boolean; onToggleAlert: (accountId: number, previous: boolean, enabled: boolean) => void }) {
   return <article className="rounded-md border bg-card p-3">
     <div className="flex min-w-0 items-start justify-between gap-2"><div className="min-w-0"><Link href={`/accounts/${account.id}`} className="block truncate font-medium text-primary">{account.name}</Link><p className="truncate text-xs text-muted-foreground">{account.platform ?? '未知平台'} · {formatAccountGroups(account.groupProjection)}</p></div><Badge variant={account.schedulable ? 'outline' : 'destructive'} className="shrink-0">{account.schedulable ? '可调度' : '不可调度'}</Badge></div>
-    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">{ACCOUNT_LIST_METRICS.filter((key) => key !== 'eligibleCount').map((key) => <div key={key} className="min-w-0"><dt><MetricDefinitionTooltip metric={key} compact window={window} coverage={coverage} /></dt><dd className="font-medium tabular-nums">{key === 'upstreamRateMultiplier'
+    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs"><div className="min-w-0"><dt>优先级</dt><dd className="font-medium tabular-nums">{account.priority}</dd></div>{ACCOUNT_LIST_METRICS.filter((key) => key !== 'eligibleCount').map((key) => <div key={key} className="min-w-0"><dt><MetricDefinitionTooltip metric={key} compact window={window} coverage={coverage} /></dt><dd className="font-medium tabular-nums">{key === 'upstreamRateMultiplier'
       ? <CompactRateComparison api={account.metrics.upstreamApiRateMultiplier} estimated={account.metrics.upstreamEstimatedRateMultiplier} />
       : formatAccountMetric(key, account.metrics[key])}</dd></div>)}</dl>
     <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">

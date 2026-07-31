@@ -31,6 +31,7 @@ interface AccountListRawRow {
   type: string | null;
   remoteStatus: string | null;
   schedulable: boolean | null;
+  priority: number;
   syncState: string;
   groupProjection: unknown;
   lastSyncedAt: Date | null;
@@ -185,6 +186,7 @@ function fixedSortExpression(key: AccountSortKey, requestNow: Date): Prisma.Sql[
     case 'account': return [Prisma.sql`LOWER(a."name")`];
     case 'platformGroup': return [Prisma.sql`LOWER(a."platform")`, Prisma.sql`LOWER(a.group_sort_text)`];
     case 'schedulable': return [Prisma.sql`a."schedulable"`];
+    case 'priority': return [Prisma.sql`a."priority"`];
     case 'availability': return [Prisma.sql`s."availability"`];
     case 'durationP95Ms': return [Prisma.sql`s."durationP95Ms"`];
     case 'firstTokenP95Ms': return [Prisma.sql`s."firstTokenP95Ms"`];
@@ -277,7 +279,7 @@ export function buildAccountListPageQuery(
   const orderBy = orderBySql(input.sort.key, input.sort.order, requestNow);
   const where = accountFilterSql(input.filters, true);
   return Prisma.sql`${accountTextCte()}
-    SELECT a."id", a."name", a."platform", a."type", a."remoteStatus", a."schedulable",
+    SELECT a."id", a."name", a."platform", a."type", a."remoteStatus", a."schedulable", a."priority",
       a."syncState", a."groupProjection", a."lastSyncedAt", a."alertEnabled",
       s."id" AS "snapshotId", s."eligibleCount", s."availability", s."errorRate",
       s."durationP95Ms", s."firstTokenP95Ms", s."cacheHitRate", s."userBilledUsd",
@@ -310,6 +312,7 @@ function listItem(row: AccountListRawRow): AccountListItemDto {
     type: row.type,
     remoteStatus: row.remoteStatus,
     schedulable: row.schedulable,
+    priority: row.priority,
     syncState: row.syncState,
     groupProjection: row.groupProjection,
     lastSyncedAt: toIso(row.lastSyncedAt),

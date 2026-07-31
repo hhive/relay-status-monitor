@@ -8,6 +8,7 @@ export const ACCOUNT_PROJECTION_SQL = `
     a.type,
     a.status AS remote_status,
     a.schedulable,
+    a.priority,
     a.rate_limited_at,
     a.rate_limit_reset_at,
     a.overload_until,
@@ -84,7 +85,7 @@ export const UPSTREAM_BALANCE_CREDENTIAL_PROJECTION_SQL = `
 
 export const CAPABILITY_PROJECTION_SQL = `
   SELECT
-    COUNT(*) FILTER (WHERE table_name = 'accounts') = 14 AS accounts,
+    COUNT(*) FILTER (WHERE table_name = 'accounts') = 15 AS accounts,
     COUNT(*) FILTER (WHERE table_name = 'account_groups') = 2 AS account_groups,
     COUNT(*) FILTER (WHERE table_name = 'groups') = 2 AS groups,
     COUNT(*) FILTER (WHERE table_name = 'usage_logs') = 13 AS usage_logs,
@@ -93,7 +94,7 @@ export const CAPABILITY_PROJECTION_SQL = `
   FROM information_schema.columns
   WHERE table_schema = current_schema()
     AND (
-      (table_name = 'accounts' AND column_name = ANY(ARRAY['id','name','platform','type','status','schedulable','rate_limited_at','rate_limit_reset_at','overload_until','temp_unschedulable_until','temp_unschedulable_reason','extra','updated_at','deleted_at'])) OR
+      (table_name = 'accounts' AND column_name = ANY(ARRAY['id','name','platform','type','status','schedulable','priority','rate_limited_at','rate_limit_reset_at','overload_until','temp_unschedulable_until','temp_unschedulable_reason','extra','updated_at','deleted_at'])) OR
       (table_name = 'account_groups' AND column_name = ANY(ARRAY['account_id','group_id'])) OR
       (table_name = 'groups' AND column_name = ANY(ARRAY['id','name'])) OR
       (table_name = 'usage_logs' AND column_name = ANY(ARRAY['id','account_id','request_id','created_at','duration_ms','first_token_ms','input_tokens','cache_read_tokens','cache_creation_tokens','actual_cost','account_stats_cost','total_cost','account_rate_multiplier'])) OR

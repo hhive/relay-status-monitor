@@ -12,6 +12,7 @@ interface AccountRow {
   type?: string | null;
   remoteStatus?: string | null;
   schedulable: boolean | null;
+  priority: number;
   syncState: string;
   groupProjection: unknown;
   lastSyncedAt?: Date | null;
@@ -192,6 +193,7 @@ export function buildAccountOverview(input: {
         type: account.type ?? null,
         remoteStatus: account.remoteStatus ?? null,
         schedulable: account.schedulable,
+        priority: account.priority,
         syncState: account.syncState,
         groupProjection: account.groupProjection,
         lastSyncedAt: account.lastSyncedAt ?? null,

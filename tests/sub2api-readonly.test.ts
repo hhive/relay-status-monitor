@@ -21,6 +21,7 @@ test('readonly adapter selects only approved projections and never credential or
   assert.match(sql, /first_token_ms/);
   assert.match(sql, /actual_cost/);
   assert.match(ACCOUNT_PROJECTION_SQL, /schedulable/);
+  assert.match(ACCOUNT_PROJECTION_SQL, /a\.priority/);
   assert.match(ACCOUNT_PROJECTION_SQL, /rate_limit_reset_at/);
   assert.match(ACCOUNT_PROJECTION_SQL, /temp_unschedulable_reason/);
   assert.match(ACCOUNT_PROJECTION_SQL, /group_ids/);
@@ -32,6 +33,7 @@ test('readonly adapter selects only approved projections and never credential or
   assert.match(CAPABILITY_PROJECTION_SQL, /usage_logs/);
   assert.match(CAPABILITY_PROJECTION_SQL, /ops_error_logs/);
   assert.match(CAPABILITY_PROJECTION_SQL, /deleted_at/);
+  assert.match(CAPABILITY_PROJECTION_SQL, /'priority'/);
   assert.match(CAPABILITY_PROJECTION_SQL, /account_groups/);
   assert.match(CAPABILITY_PROJECTION_SQL, /table_name = 'groups'/);
   assert.match(CAPABILITY_PROJECTION_SQL, /column_name = ANY\(ARRAY\['account_id','group_id'\]\)/);

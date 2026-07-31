@@ -92,7 +92,7 @@ test('account list exposes persisted sorting on desktop and mobile', async () =>
   const shared = source('src/components/account-observability/account-overview.tsx');
   const tooltip = source('src/components/account-observability/metric-definition-tooltip.tsx');
 
-  assert.equal(sort.ACCOUNT_SORT_KEYS.length, 14);
+  assert.equal(sort.ACCOUNT_SORT_KEYS.length, 15);
   assert.match(shared, /readAccountSortStateSafely\(\(\) => window\.localStorage\)/);
   assert.match(shared, /setSortState\(next\);[\s\S]*?writeAccountSortStateSafely\(\(\) => window\.localStorage, next\)/);
   assert.doesNotMatch(shared, /sortAccountSummaries/);
@@ -110,6 +110,10 @@ test('account list exposes persisted sorting on desktop and mobile', async () =>
   for (const key of sort.ACCOUNT_SORT_KEYS) assert.match(shared, new RegExp(`sortKey=['"]${key}['"]`));
   assert.equal((sort.ACCOUNT_SORT_KEYS as readonly string[]).includes('errorRate'), false);
   assert.equal(sort.ACCOUNT_SORT_KEYS.includes('upstreamRateMultiplier'), true);
+  assert.equal(sort.ACCOUNT_SORT_KEYS.includes('priority'), true);
+  assert.match(shared, /<SortableAccountHeader sortKey="priority"/);
+  assert.match(shared, /account\.priority/);
+  assert.match(shared, /<dt>优先级<\/dt>/);
 });
 
 test('desktop account list keeps the account header and cells fixed during horizontal scrolling', () => {
