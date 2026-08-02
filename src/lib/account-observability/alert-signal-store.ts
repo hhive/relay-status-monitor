@@ -71,6 +71,46 @@ export async function recordNormalSignal(accountId: number, ruleId: number): Pro
   });
 }
 
+export async function discardActivatedSignal(accountId: number, ruleId: number): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const key = { accountId_ruleId: { accountId, ruleId } };
+    const current = await tx.accountAlertCandidate.findUnique({ where: key });
+    if (!current?.active || current.adjustmentLevel < 1) return;
+    const adjustmentLevel = current.adjustmentLevel - 1;
+    if (adjustmentLevel === 0 && current.triggerCount === 0) {
+      await tx.accountAlertCandidate.delete({ where: key });
+      return;
+    }
+    await tx.accountAlertCandidate.update({
+      where: key,
+      data: { adjustmentLevel, active: adjustmentLevel > 0, recoveryNormalCount: 0 },
+    });
+  });
+}
+
+export async function discardLatestActivatedSignal(accountId: number): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const current = await tx.accountAlertCandidate.findFirst({
+      where: { accountId, active: true, adjustmentLevel: { gt: 0 } },
+      orderBy: [{ updatedAt: 'desc' }, { ruleId: 'asc' }],
+      select: { ruleId: true },
+    });
+    if (!current) return;
+    const key = { accountId_ruleId: { accountId, ruleId: current.ruleId } };
+    const candidate = await tx.accountAlertCandidate.findUnique({ where: key });
+    if (!candidate?.active || candidate.adjustmentLevel < 1) return;
+    const adjustmentLevel = candidate.adjustmentLevel - 1;
+    if (adjustmentLevel === 0 && candidate.triggerCount === 0) {
+      await tx.accountAlertCandidate.delete({ where: key });
+      return;
+    }
+    await tx.accountAlertCandidate.update({
+      where: key,
+      data: { adjustmentLevel, active: adjustmentLevel > 0, recoveryNormalCount: 0 },
+    });
+  });
+}
+
 export async function resetSignalRecovery(accountId: number, ruleId: number): Promise<void> {
   await prisma.accountAlertCandidate.updateMany({
     where: { accountId, ruleId, active: true, recoveryNormalCount: { not: 0 } },

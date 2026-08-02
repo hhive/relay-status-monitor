@@ -34,6 +34,8 @@ export interface PriorityChangeLogEntry {
   conflictRecalculated: boolean;
 }
 
+export type PrioritySyncResult = 'applied' | 'capped' | 'disabled' | 'pending_retry' | 'unchanged';
+
 export type PriorityChangeLogger = (entry: PriorityChangeLogEntry) => void;
 
 function errorCode(error: unknown): string {
@@ -65,13 +67,30 @@ export function createPriorityCoordinator(
     try { logPriorityChange(entry); } catch { /* Logging must not invalidate a completed remote write. */ }
   };
 
-  const applyAdjustment = async (input: PriorityAdjustmentRecord, requestedFactor: number): Promise<PriorityAdjustmentRecord> => {
+  const settleSkippedAdjustment = async (
+    record: PriorityAdjustmentRecord,
+    result: 'capped' | 'disabled',
+  ): Promise<{ record: PriorityAdjustmentRecord; result: PrioritySyncResult }> => {
+    const settled = {
+      ...record,
+      expectedPriority: null,
+      basePriority: null,
+      adjustedPriority: null,
+      status: record.appliedFactors.length > 0 ? 'ACTIVE' : 'RESTORED',
+      lastError: null,
+    };
+    await repository.save(settled);
+    return { record: settled, result };
+  };
+
+  const applyAdjustment = async (
+    input: PriorityAdjustmentRecord,
+    requestedFactor: number,
+  ): Promise<{ record: PriorityAdjustmentRecord; result: PrioritySyncResult }> => {
     let record = input;
     const factor = ['PENDING', 'FAILED_ADJUST'].includes(record.status) ? record.factor : requestedFactor;
     if (factor === 0) {
-      record = { ...record, appliedFactors: [...record.appliedFactors, 0], factor, status: 'ACTIVE', lastError: null };
-      await repository.save(record);
-      return record;
+      return settleSkippedAdjustment({ ...record, factor }, 'disabled');
     }
     if (!['PENDING', 'FAILED_ADJUST'].includes(record.status) || record.expectedPriority == null || record.adjustedPriority == null) {
       record = {
@@ -89,18 +108,7 @@ export function createPriorityCoordinator(
       const current = await client.getPriority(record.sourceAccountId);
       const calculated = calculateAdjustedPriority(current, factor);
       if (!calculated.enabled) {
-        record = {
-          ...record,
-          expectedPriority: null,
-          basePriority: null,
-          adjustedPriority: null,
-          appliedFactors: [...record.appliedFactors, 0],
-          factor,
-          status: 'ACTIVE',
-          lastError: null,
-        };
-        await repository.save(record);
-        return record;
+        return settleSkippedAdjustment({ ...record, factor }, 'capped');
       }
       record = {
         ...record,
@@ -123,18 +131,7 @@ export function createPriorityCoordinator(
       conflictRecalculated = true;
       const recalculated = calculateAdjustedPriority(error.currentPriority, factor);
       if (!recalculated.enabled) {
-        record = {
-          ...record,
-          expectedPriority: null,
-          basePriority: null,
-          adjustedPriority: null,
-          appliedFactors: [...record.appliedFactors, 0],
-          factor,
-          status: 'ACTIVE',
-          lastError: null,
-        };
-        await repository.save(record);
-        return record;
+        return settleSkippedAdjustment({ ...record, factor }, 'capped');
       }
       record = { ...record, expectedPriority: error.currentPriority, basePriority: recalculated.basePriority, adjustedPriority: recalculated.adjustedPriority };
       await repository.save(record);
@@ -156,7 +153,7 @@ export function createPriorityCoordinator(
       lastError: null,
     };
     await repository.save(record);
-    return record;
+    return { record, result: 'applied' };
   };
 
   const applyRestore = async (input: PriorityAdjustmentRecord): Promise<PriorityAdjustmentRecord> => {
@@ -194,6 +191,19 @@ export function createPriorityCoordinator(
       };
       await repository.save(record);
     }
+    if (record.restoreExpectedPriority === record.restoreTargetPriority) {
+      const appliedFactors = record.appliedFactors.slice(0, -1);
+      record = {
+        ...record,
+        appliedFactors,
+        restoreExpectedPriority: null,
+        restoreTargetPriority: null,
+        status: appliedFactors.length > 0 ? 'ACTIVE' : 'RESTORED',
+        lastError: null,
+      };
+      await repository.save(record);
+      return record;
+    }
     let conflictRecalculated = false;
     try {
       await client.setPriority(record.sourceAccountId, record.restoreExpectedPriority!, record.restoreTargetPriority!);
@@ -227,19 +237,33 @@ export function createPriorityCoordinator(
     return record;
   };
 
-  const sync = async (account: { id: number; sourceAccountId: string }, factor: number, eligible = true): Promise<void> => {
+  const sync = async (
+    account: { id: number; sourceAccountId: string },
+    factor: number,
+    eligible = true,
+  ): Promise<PrioritySyncResult> => {
     let record = await repository.find(account.id);
     const desiredLevel = eligible ? await repository.countActiveSignals(account.id) : 0;
-    if (!record && desiredLevel === 0) return;
+    if (!record && desiredLevel === 0) return 'unchanged';
     record ??= emptyRecord(account, factor);
+    let result: PrioritySyncResult = 'unchanged';
     try {
       if (['PENDING', 'FAILED_ADJUST'].includes(record.status) && record.expectedPriority != null) {
-        record = await applyAdjustment(record, record.factor);
+        const applied = await applyAdjustment(record, record.factor);
+        record = applied.record;
+        result = applied.result;
+        if (result === 'capped' || result === 'disabled') return result;
       } else if (['RESTORING', 'FAILED_RESTORE'].includes(record.status) && record.restoreExpectedPriority != null) {
         record = await applyRestore(record);
       }
-      while (record.appliedFactors.length < desiredLevel) record = await applyAdjustment(record, factor);
+      while (record.appliedFactors.length < desiredLevel) {
+        const applied = await applyAdjustment(record, factor);
+        record = applied.record;
+        result = applied.result;
+        if (result === 'capped' || result === 'disabled') return result;
+      }
       while (record.appliedFactors.length > desiredLevel) record = await applyRestore(record);
+      return result;
     } catch (error) {
       const persisted = await repository.find(account.id) ?? record;
       const restoring = ['RESTORING', 'FAILED_RESTORE'].includes(persisted.status);
@@ -248,18 +272,25 @@ export function createPriorityCoordinator(
         status: restoring ? 'FAILED_RESTORE' : 'FAILED_ADJUST',
         lastError: errorCode(error),
       });
+      return 'pending_retry';
     }
   };
 
-  const retry = async (accounts: ReadonlyMap<number, { id: number; sourceAccountId: string; priorityEligible?: boolean }>, factor: number): Promise<void> => {
+  const retry = async (accounts: ReadonlyMap<number, { id: number; sourceAccountId: string; priorityEligible?: boolean }>, factor: number): Promise<number[]> => {
     const seen = new Set<number>();
+    const discardedAccountIds: number[] = [];
     for (const account of accounts.values()) {
       seen.add(account.id);
-      await sync(account, factor, account.priorityEligible !== false);
+      const result = await sync(account, factor, account.priorityEligible !== false);
+      if (result === 'capped' || result === 'disabled') discardedAccountIds.push(account.id);
     }
     for (const record of await repository.listUnsettled()) {
-      if (!seen.has(record.accountId)) await sync({ id: record.accountId, sourceAccountId: record.sourceAccountId }, factor);
+      if (!seen.has(record.accountId)) {
+        const result = await sync({ id: record.accountId, sourceAccountId: record.sourceAccountId }, factor);
+        if (result === 'capped' || result === 'disabled') discardedAccountIds.push(record.accountId);
+      }
     }
+    return discardedAccountIds;
   };
 
   return { adjust: sync, restore: (accountId: number) => repository.find(accountId).then((record) => (
@@ -290,7 +321,7 @@ function coordinator() {
 }
 
 export async function ensurePriorityAdjusted(account: { id: number; sourceAccountId: string }, factor: number) {
-  try { await coordinator().adjust(account, factor); } catch { /* Configuration failures do not block alert processing. */ }
+  try { return await coordinator().adjust(account, factor); } catch { return 'pending_retry' as const; }
 }
 
 export async function ensurePriorityRestored(accountId: number) {
@@ -298,5 +329,5 @@ export async function ensurePriorityRestored(accountId: number) {
 }
 
 export async function retryPriorityAdjustments(accounts: ReadonlyMap<number, { id: number; sourceAccountId: string; priorityEligible?: boolean }>, factor: number) {
-  try { await coordinator().retry(accounts, factor); } catch { /* A later cycle retries unsettled rows. */ }
+  try { return await coordinator().retry(accounts, factor); } catch { return []; }
 }

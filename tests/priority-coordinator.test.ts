@@ -99,9 +99,9 @@ test('priority coordinator stores each layer factor and restores in reverse orde
   assert.equal(stored.status, 'RESTORED');
 });
 
-test('priority coordinator records an over-limit layer as a reversible no-op', async () => {
+test('priority coordinator rejects an over-limit layer without accumulating a no-op', async () => {
   let stored: PriorityAdjustmentRecord | null = null;
-  let activeSignals = 1;
+  const activeSignals = 1;
   let writeCount = 0;
   const repository: PriorityAdjustmentRepository = {
     find: async () => stored,
@@ -114,13 +114,56 @@ test('priority coordinator records an over-limit layer as a reversible no-op', a
     setPriority: async () => { writeCount += 1; return 900_000; },
   });
 
-  await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10);
+  const result = await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10);
   assert.equal(writeCount, 0);
-  assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, [0]);
+  assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, []);
+  assert.equal((stored as PriorityAdjustmentRecord | null)?.status, 'RESTORED');
+  assert.equal(result, 'capped');
+});
 
-  activeSignals = 0;
+test('priority coordinator disables a zero-factor layer without accumulating a no-op', async () => {
+  let stored: PriorityAdjustmentRecord | null = null;
+  const repository: PriorityAdjustmentRepository = {
+    find: async () => stored,
+    save: async (record) => { stored = { ...record }; },
+    countActiveSignals: async () => 1,
+    listUnsettled: async () => stored ? [stored] : [],
+  };
+  const coordinator = createPriorityCoordinator(repository, {
+    getPriority: async () => { throw new Error('zero factor must not read priority'); },
+    setPriority: async () => { throw new Error('zero factor must not write priority'); },
+  });
+
+  const result = await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 0);
+
+  assert.equal(result, 'disabled');
+  assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, []);
+  assert.equal((stored as PriorityAdjustmentRecord | null)?.status, 'RESTORED');
+});
+
+test('priority coordinator settles a lower-bound restore without a remote no-op write or log', async () => {
+  let stored: PriorityAdjustmentRecord | null = {
+    accountId: 7, sourceAccountId: '9', expectedPriority: null, basePriority: null, adjustedPriority: null,
+    restoreExpectedPriority: null, restoreTargetPriority: null, appliedFactors: [10],
+    factor: 10, status: 'ACTIVE', lastError: null,
+  };
+  let writeCount = 0;
+  const logs: PriorityChangeLogEntry[] = [];
+  const repository: PriorityAdjustmentRepository = {
+    find: async () => stored,
+    save: async (record) => { stored = { ...record }; },
+    countActiveSignals: async () => 0,
+    listUnsettled: async () => stored ? [stored] : [],
+  };
+  const coordinator = createPriorityCoordinator(repository, {
+    getPriority: async () => 1,
+    setPriority: async () => { writeCount += 1; return 1; },
+  }, (entry) => { logs.push(entry); });
+
   await coordinator.restore(7);
+
   assert.equal(writeCount, 0);
+  assert.deepEqual(logs, []);
   assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, []);
   assert.equal((stored as PriorityAdjustmentRecord | null)?.status, 'RESTORED');
 });
@@ -154,6 +197,30 @@ test('priority coordinator retries a failed new layer with its persisted factor'
   await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 99);
   assert.equal(remotePriority, 1000, 'retry uses the factor persisted for the failed layer');
   assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, [10, 20]);
+});
+
+test('priority retry reports a pending layer that becomes capped on the next cycle', async () => {
+  let stored: PriorityAdjustmentRecord | null = {
+    accountId: 7, sourceAccountId: '9', expectedPriority: null, basePriority: null, adjustedPriority: null,
+    restoreExpectedPriority: null, restoreTargetPriority: null, appliedFactors: [],
+    factor: 10, status: 'FAILED_ADJUST', lastError: 'priority_request_failed',
+  };
+  const repository: PriorityAdjustmentRepository = {
+    find: async () => stored,
+    save: async (record) => { stored = { ...record }; },
+    countActiveSignals: async () => 1,
+    listUnsettled: async () => stored ? [stored] : [],
+  };
+  const coordinator = createPriorityCoordinator(repository, {
+    getPriority: async () => 1_000_000,
+    setPriority: async () => { throw new Error('capped retry must not write'); },
+  });
+
+  const discarded = await coordinator.retry(new Map([[7, { id: 7, sourceAccountId: '9' }]]), 10);
+
+  assert.deepEqual(discarded, [7]);
+  assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, []);
+  assert.equal((stored as PriorityAdjustmentRecord | null)?.status, 'RESTORED');
 });
 
 test('priority coordinator restores applied layers when the account has no enabled alert group', async () => {

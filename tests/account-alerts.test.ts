@@ -44,6 +44,8 @@ function harness(input: {
     onDelivered: (channelId: number) => Promise<void>,
   ) => Promise<void>;
   confirmationCount?: number;
+  priorityAdjustmentResult?: 'applied' | 'capped' | 'disabled' | 'pending_retry' | 'unchanged';
+  retryDiscardedAccountIds?: number[];
 }) {
   const created: Array<Record<string, unknown>> = [];
   const resolved: Array<{ id: number; at: Date }> = [];
@@ -52,6 +54,7 @@ function harness(input: {
   const signalCandidates = new Map<number, AlertCandidateState & { active: boolean; adjustmentLevel: number; recoveryNormalCount: number }>();
   const priorityAdjusted: number[] = [];
   const priorityRestored: number[] = [];
+  const discardedSignals: Array<{ accountId: number; ruleId: number }> = [];
   const normalizeEvent = (event: TestAlertEventRecord): AccountAlertEventRecord => ({
     ...event,
     recoveryNormalCount: event.recoveryNormalCount ?? 0,
@@ -93,8 +96,20 @@ function harness(input: {
       return { confirmed: current.adjustmentLevel > 0, activated: false, deactivated: true };
     },
     resetSignalRecovery: async (_accountId, ruleId) => { const current = signalCandidates.get(ruleId); if (current) current.recoveryNormalCount = 0; },
-    onSignalConfirmed: async (signalAccount) => { priorityAdjusted.push(signalAccount.id); },
+    onSignalConfirmed: (async (signalAccount) => {
+      priorityAdjusted.push(signalAccount.id);
+      return input.priorityAdjustmentResult ?? 'applied';
+    }) as AccountAlertDependencies['onSignalConfirmed'],
     onSignalDeactivated: async (signalAccount) => { priorityRestored.push(signalAccount.id); },
+    retryPriorityAdjustments: async () => input.retryDiscardedAccountIds ?? [],
+    discardLatestActivatedSignal: async (accountId) => {
+      const latest = [...signalCandidates.entries()]
+        .filter(([, candidate]) => candidate.active && candidate.adjustmentLevel > 0)
+        .sort((left, right) => right[1].lastTriggeredAt.getTime() - left[1].lastTriggeredAt.getTime())[0];
+      if (!latest || accountId !== account.id) return;
+      latest[1].adjustmentLevel -= 1;
+      if (latest[1].adjustmentLevel === 0) signalCandidates.delete(latest[0]);
+    },
     loadLatestMetricBucket: async () => input.latestMetricBucketStart
       ?? account.metricMinutes.reduce<Date | null>((latest, item) => latest == null || item.bucketStart > latest ? item.bucketStart : latest, null),
     findOpenEvent: async (accountId, ruleId) => openEvents.find((event) => event.accountId === accountId && event.ruleId === ruleId) ?? null,
@@ -115,7 +130,19 @@ function harness(input: {
       await input.notify?.(event, recovery, deliveredChannelIds, onDelivered);
     },
   };
-  return { evaluate: createAccountAlertEvaluator(dependencies), created, resolved, notified, openEvents, normalCountUpdates, priorityAdjusted, priorityRestored };
+  Object.assign(dependencies, {
+    discardActivatedSignal: async (accountId: number, ruleId: number) => {
+      discardedSignals.push({ accountId, ruleId });
+      const current = signalCandidates.get(ruleId);
+      if (!current?.active || current.adjustmentLevel < 1) return;
+      current.adjustmentLevel -= 1;
+      if (current.adjustmentLevel === 0) signalCandidates.delete(ruleId);
+    },
+  });
+  return {
+    evaluate: createAccountAlertEvaluator(dependencies), created, resolved, notified, openEvents,
+    normalCountUpdates, priorityAdjusted, priorityRestored, discardedSignals, signalCandidates,
+  };
 }
 
 const minute = (overrides: Partial<AccountMetricMinuteRecord> = {}): AccountMetricMinuteRecord => ({
@@ -148,6 +175,39 @@ test('each two rule hits adds a priority layer and each three normal evaluations
   await run.evaluate(new Date('2026-07-25T12:08:00Z'));
   await run.evaluate(new Date('2026-07-25T12:09:00Z'));
   assert.deepEqual(run.priorityRestored, [9, 9]);
+});
+
+test('a capped priority adjustment discards the newly confirmed signal layer but keeps the alert', async () => {
+  const run = harness({
+    rules: [rule({ minRequests: 1 })],
+    minutes: [minute({ successCount: 2, upstreamErrorCount: 8 })],
+    priorityAdjustmentResult: 'capped',
+  });
+
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+
+  assert.equal(run.created.length, 1, 'priority capping must not suppress the alert event');
+  assert.deepEqual(run.discardedSignals, [{ accountId: 9, ruleId: 1 }]);
+  assert.equal(run.signalCandidates.size, 0, 'the capped adjustment must not leave recovery debt');
+});
+
+test('a capped retry discards one previously pending signal layer before rule evaluation', async () => {
+  const run = harness({
+    rules: [],
+    retryDiscardedAccountIds: [9],
+  });
+  run.signalCandidates.set(1, {
+    windowStartedAt: new Date('2026-07-25T11:58:00Z'),
+    lastTriggeredAt: new Date('2026-07-25T11:59:00Z'),
+    triggerCount: 0,
+    active: true,
+    adjustmentLevel: 1,
+    recoveryNormalCount: 0,
+  });
+
+  await run.evaluate(new Date('2026-07-25T12:00:00Z'));
+
+  assert.equal(run.signalCandidates.size, 0);
 });
 
 test('accounts without an alert-enabled group create no new alerts or priority layers', async () => {

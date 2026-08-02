@@ -6,6 +6,8 @@ import { normalizeGlobalAccountAlertMetric } from './alert-management';
 import { isAccountInAlertEnabledGroup, shouldSuppressAccountAlerts } from './group-alert-settings';
 import {
   loadAlertBehaviorSettings,
+  discardActivatedSignal,
+  discardLatestActivatedSignal,
   recordNormalSignal,
   recordTriggeredSignal,
   resetSignalRecovery,
@@ -13,6 +15,7 @@ import {
 } from './alert-signal-store';
 import type { AlertBehaviorSettings } from './alert-behavior';
 import { ensurePriorityAdjusted, ensurePriorityRestored, retryPriorityAdjustments } from './priority-coordinator';
+import type { PrioritySyncResult } from './priority-coordinator';
 
 export type AccountAlertMetric =
   | 'availability_low'
@@ -115,9 +118,11 @@ export interface AccountAlertDependencies {
   recordTriggeredSignal?: (input: { accountId: number; ruleId: number; now: Date; settings: AlertBehaviorSettings; allowStart: boolean }) => Promise<AlertSignalTransition>;
   recordNormalSignal?: (accountId: number, ruleId: number) => Promise<AlertSignalTransition>;
   resetSignalRecovery?: (accountId: number, ruleId: number) => Promise<void>;
-  onSignalConfirmed?: (account: AccountAlertAccountRecord, settings: AlertBehaviorSettings) => Promise<void>;
+  onSignalConfirmed?: (account: AccountAlertAccountRecord, settings: AlertBehaviorSettings) => Promise<PrioritySyncResult | void>;
+  discardActivatedSignal?: (accountId: number, ruleId: number) => Promise<void>;
   onSignalDeactivated?: (account: AccountAlertAccountRecord) => Promise<void>;
-  retryPriorityAdjustments?: (accounts: ReadonlyMap<number, AccountAlertAccountRecord & { priorityEligible: boolean }>, settings: AlertBehaviorSettings) => Promise<void>;
+  retryPriorityAdjustments?: (accounts: ReadonlyMap<number, AccountAlertAccountRecord & { priorityEligible: boolean }>, settings: AlertBehaviorSettings) => Promise<number[] | void>;
+  discardLatestActivatedSignal?: (accountId: number) => Promise<void>;
   loadLatestMetricBucket: (accountId: number) => Promise<Date | null>;
   findOpenEvent: (accountId: number, ruleId: number) => Promise<AccountAlertEventRecord | null>;
   findRecentEvent: (accountId: number, ruleId: number, since: Date) => Promise<AccountAlertEventRecord | null>;
@@ -180,6 +185,18 @@ async function setRecoveryNormalCount(
   if (next === event.recoveryNormalCount) return;
   await dependencies.updateRecoveryNormalCount(event.id, next);
   event.recoveryNormalCount = next;
+}
+
+async function applyConfirmedSignal(
+  dependencies: AccountAlertDependencies,
+  account: AccountAlertAccountRecord,
+  ruleId: number,
+  settings: AlertBehaviorSettings,
+): Promise<void> {
+  const result = await dependencies.onSignalConfirmed?.(account, settings);
+  if (result === 'capped' || result === 'disabled') {
+    await dependencies.discardActivatedSignal?.(account.id, ruleId);
+  }
 }
 
 export function evaluateAccountMetricAlert(input: {
@@ -347,10 +364,13 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
     const balanceHistory = rules.some((rule) => rule.enabled && rule.metric === 'balance_low')
       ? await dependencies.loadBalanceHistory(accounts.map((account) => account.id), end)
       : new Map<number, AccountBalanceMinuteRecord[]>();
-    await dependencies.retryPriorityAdjustments?.(new Map(accounts.map((account) => [account.id, {
+    const discardedAccountIds = await dependencies.retryPriorityAdjustments?.(new Map(accounts.map((account) => [account.id, {
       ...account,
       priorityEligible: isAccountInAlertEnabledGroup(account.groupProjection, disabledGroupIds),
     }])), behaviorSettings);
+    for (const accountId of discardedAccountIds ?? []) {
+      await dependencies.discardLatestActivatedSignal?.(accountId);
+    }
     for (const account of accounts) {
       account.balanceHistory = balanceHistory.get(account.id) ?? [];
       const priorityEligible = isAccountInAlertEnabledGroup(account.groupProjection, disabledGroupIds);
@@ -397,7 +417,9 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
           const openSignal = await dependencies.recordTriggeredSignal?.({
             accountId: account.id, ruleId: rule.id, now, settings: behaviorSettings, allowStart: true,
           });
-          if (openSignal?.activated && priorityEligible) await dependencies.onSignalConfirmed?.(account, behaviorSettings);
+          if (openSignal?.activated && priorityEligible) {
+            await applyConfirmedSignal(dependencies, account, rule.id, behaviorSettings);
+          }
           await setRecoveryNormalCount(dependencies, open, 0);
           if (open.notificationDeliveries != null) {
             await notifyEvent(dependencies, open, account, false);
@@ -410,7 +432,9 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
             allowStart: rule.metric !== 'balance_low' || result.crossed === true,
           })
           : { confirmed: true, activated: false, deactivated: false };
-        if (signal.activated && priorityEligible) await dependencies.onSignalConfirmed?.(account, behaviorSettings);
+        if (signal.activated && priorityEligible) {
+          await applyConfirmedSignal(dependencies, account, rule.id, behaviorSettings);
+        }
         if (!signal.confirmed) continue;
         const cooldownStart = new Date(now.getTime() - rule.cooldownMin * 60_000);
         if (rule.metric !== 'balance_low' && await dependencies.findRecentEvent(account.id, rule.id, cooldownStart)) continue;
@@ -460,6 +484,8 @@ export async function evaluateAccountAlerts(now = new Date()): Promise<void> {
     recordTriggeredSignal,
     recordNormalSignal,
     resetSignalRecovery,
+    discardActivatedSignal,
+    discardLatestActivatedSignal,
     onSignalConfirmed: (account, settings) => ensurePriorityAdjusted(account, settings.priorityFactor),
     onSignalDeactivated: (account) => ensurePriorityRestored(account.id),
     retryPriorityAdjustments: (accounts, settings) => retryPriorityAdjustments(accounts, settings.priorityFactor),
