@@ -29,7 +29,8 @@ test("pins the supported Next.js dependency baseline", () => {
   assert.match(packageJson.dependencies.react, /^\^18(?:\.|$)/);
   assert.match(packageJson.dependencies["react-dom"], /^\^18(?:\.|$)/);
   assert.equal(packageJson.pnpm?.overrides?.sharp, "0.35.3");
-  assert.equal(packageJson.pnpm?.overrides?.postcss, "8.5.18");
+  assert.equal(packageJson.pnpm?.overrides?.postcss, "8.5.26");
+  assert.equal(packageJson.pnpm?.overrides?.nanoid, "3.3.18");
 });
 
 test("provides Node test runner and typecheck scripts", () => {
