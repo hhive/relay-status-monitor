@@ -353,7 +353,10 @@ export function createAccountAlertEvaluator(dependencies: AccountAlertDependenci
       dependencies.loadRules(),
       dependencies.loadAccounts({ start, end }),
       dependencies.loadDisabledGroupIds(),
-      dependencies.loadBehaviorSettings?.() ?? Promise.resolve({ confirmationWindowMinutes: 5, confirmationCount: 1, priorityFactor: 0 }),
+      dependencies.loadBehaviorSettings?.() ?? Promise.resolve({
+        confirmationWindowMinutes: 5, confirmationCount: 1, priorityFactor: 0,
+        priorityCapPauseEnabled: true, priorityCapPauseDurationMinutes: 1, priorityCapPauseCooldownMinutes: 5,
+      }),
     ]);
     const rules = storedRules.flatMap((rule) => {
       const metric = rule.metric === 'upstream_rate_multiplier'

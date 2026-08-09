@@ -4,6 +4,9 @@ export interface AlertBehaviorSettings {
   confirmationWindowMinutes: number;
   confirmationCount: number;
   priorityFactor: number;
+  priorityCapPauseEnabled: boolean;
+  priorityCapPauseDurationMinutes: number;
+  priorityCapPauseCooldownMinutes: number;
 }
 
 export interface AlertCandidateState {
@@ -15,6 +18,8 @@ export interface AlertCandidateState {
 const MAX_WINDOW_MINUTES = 60;
 const MAX_CONFIRMATION_COUNT = 20;
 const MAX_PRIORITY_FACTOR = 1_000;
+const MAX_PRIORITY_CAP_PAUSE_MINUTES = 60;
+const MAX_PRIORITY_CAP_COOLDOWN_MINUTES = 1_440;
 
 function integerSetting(value: unknown, fallback: number, min: number, max: number, name: string): number {
   if (value == null || value === '') return fallback;
@@ -25,11 +30,23 @@ function integerSetting(value: unknown, fallback: number, min: number, max: numb
   return parsed;
 }
 
+function booleanSetting(value: unknown, fallback: boolean, name: string): boolean {
+  if (value == null || value === '') return fallback;
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  throw new Error(`invalid ${name}`);
+}
+
 export function parseAlertBehaviorSettings(values: Record<string, unknown>): AlertBehaviorSettings {
   return {
     confirmationWindowMinutes: integerSetting(values.alert_confirmation_window_minutes, 5, 1, MAX_WINDOW_MINUTES, 'confirmation window'),
     confirmationCount: integerSetting(values.alert_confirmation_count, 2, 1, MAX_CONFIRMATION_COUNT, 'confirmation count'),
     priorityFactor: integerSetting(values.alert_priority_factor, 10, 0, MAX_PRIORITY_FACTOR, 'priority factor'),
+    priorityCapPauseEnabled: booleanSetting(values.alert_priority_cap_pause_enabled, true, 'priority cap pause enabled'),
+    priorityCapPauseDurationMinutes: integerSetting(
+      values.alert_priority_cap_pause_duration_minutes, 1, 1, MAX_PRIORITY_CAP_PAUSE_MINUTES, 'priority cap pause duration'),
+    priorityCapPauseCooldownMinutes: integerSetting(
+      values.alert_priority_cap_pause_cooldown_minutes, 5, 0, MAX_PRIORITY_CAP_COOLDOWN_MINUTES, 'priority cap pause cooldown'),
   };
 }
 

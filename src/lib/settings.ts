@@ -52,6 +52,9 @@ export const SettingKeys = {
   ALERT_CONFIRMATION_WINDOW_MIN: 'alert_confirmation_window_minutes',
   ALERT_CONFIRMATION_COUNT: 'alert_confirmation_count',
   ALERT_PRIORITY_FACTOR: 'alert_priority_factor',
+  ALERT_PRIORITY_CAP_PAUSE_ENABLED: 'alert_priority_cap_pause_enabled',
+  ALERT_PRIORITY_CAP_PAUSE_DURATION_MIN: 'alert_priority_cap_pause_duration_minutes',
+  ALERT_PRIORITY_CAP_PAUSE_COOLDOWN_MIN: 'alert_priority_cap_pause_cooldown_minutes',
 } as const;
 
 export type EditableSettingKey = typeof SettingKeys[keyof typeof SettingKeys];
@@ -77,6 +80,12 @@ export function validateEditableSettingValue(key: EditableSettingKey, value: unk
       parseAlertBehaviorSettings({ alert_confirmation_count: text });
     } else if (key === SettingKeys.ALERT_PRIORITY_FACTOR) {
       parseAlertBehaviorSettings({ alert_priority_factor: text });
+    } else if (key === SettingKeys.ALERT_PRIORITY_CAP_PAUSE_ENABLED) {
+      parseAlertBehaviorSettings({ alert_priority_cap_pause_enabled: text });
+    } else if (key === SettingKeys.ALERT_PRIORITY_CAP_PAUSE_DURATION_MIN) {
+      parseAlertBehaviorSettings({ alert_priority_cap_pause_duration_minutes: text });
+    } else if (key === SettingKeys.ALERT_PRIORITY_CAP_PAUSE_COOLDOWN_MIN) {
+      parseAlertBehaviorSettings({ alert_priority_cap_pause_cooldown_minutes: text });
     }
   } catch {
     throw new InvalidEditableSettingValueError();

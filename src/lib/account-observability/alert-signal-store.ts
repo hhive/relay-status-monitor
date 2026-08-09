@@ -9,15 +9,21 @@ export interface AlertSignalTransition {
 }
 
 export async function loadAlertBehaviorSettings(): Promise<AlertBehaviorSettings> {
-  const [window, count, factor] = await Promise.all([
+  const [window, count, factor, pauseEnabled, pauseDuration, pauseCooldown] = await Promise.all([
     getSetting(SettingKeys.ALERT_CONFIRMATION_WINDOW_MIN, '5'),
     getSetting(SettingKeys.ALERT_CONFIRMATION_COUNT, '2'),
     getSetting(SettingKeys.ALERT_PRIORITY_FACTOR, '10'),
+    getSetting(SettingKeys.ALERT_PRIORITY_CAP_PAUSE_ENABLED, 'true'),
+    getSetting(SettingKeys.ALERT_PRIORITY_CAP_PAUSE_DURATION_MIN, '1'),
+    getSetting(SettingKeys.ALERT_PRIORITY_CAP_PAUSE_COOLDOWN_MIN, '5'),
   ]);
   return parseAlertBehaviorSettings({
     alert_confirmation_window_minutes: window,
     alert_confirmation_count: count,
     alert_priority_factor: factor,
+    alert_priority_cap_pause_enabled: pauseEnabled,
+    alert_priority_cap_pause_duration_minutes: pauseDuration,
+    alert_priority_cap_pause_cooldown_minutes: pauseCooldown,
   });
 }
 

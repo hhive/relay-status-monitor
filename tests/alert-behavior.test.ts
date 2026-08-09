@@ -9,20 +9,33 @@ import {
   type AlertCandidateState,
 } from '../src/lib/account-observability/alert-behavior';
 
-test('alert behavior defaults to two hits in five minutes and priority factor ten', () => {
+test('alert behavior includes priority cap pause defaults and validates configurable windows', () => {
   assert.deepEqual(parseAlertBehaviorSettings({}), {
     confirmationWindowMinutes: 5,
     confirmationCount: 2,
     priorityFactor: 10,
+    priorityCapPauseEnabled: true,
+    priorityCapPauseDurationMinutes: 1,
+    priorityCapPauseCooldownMinutes: 5,
   });
   assert.deepEqual(parseAlertBehaviorSettings({
     alert_confirmation_window_minutes: '9',
     alert_confirmation_count: '3',
     alert_priority_factor: '0',
-  }), { confirmationWindowMinutes: 9, confirmationCount: 3, priorityFactor: 0 });
+    alert_priority_cap_pause_enabled: 'false',
+    alert_priority_cap_pause_duration_minutes: '12',
+    alert_priority_cap_pause_cooldown_minutes: '30',
+  }), {
+    confirmationWindowMinutes: 9, confirmationCount: 3, priorityFactor: 0,
+    priorityCapPauseEnabled: false, priorityCapPauseDurationMinutes: 12, priorityCapPauseCooldownMinutes: 30,
+  });
   for (const invalid of ['-1', '1.5', 'x']) {
     assert.throws(() => parseAlertBehaviorSettings({ alert_confirmation_count: invalid }), /invalid/i);
   }
+  assert.throws(() => parseAlertBehaviorSettings({ alert_priority_cap_pause_enabled: 'yes' }), /invalid/i);
+  assert.throws(() => parseAlertBehaviorSettings({ alert_priority_cap_pause_duration_minutes: '0' }), /invalid/i);
+  assert.throws(() => parseAlertBehaviorSettings({ alert_priority_cap_pause_duration_minutes: '61' }), /invalid/i);
+  assert.throws(() => parseAlertBehaviorSettings({ alert_priority_cap_pause_cooldown_minutes: '1441' }), /invalid/i);
 });
 
 test('candidate confirms on the second hit inside the rolling window and resets after expiry', () => {
@@ -72,5 +85,11 @@ test('schema and settings expose persistent candidates, adjustments and exact ed
   assert.match(settings, /ALERT_CONFIRMATION_WINDOW_MIN/);
   assert.match(settings, /ALERT_CONFIRMATION_COUNT/);
   assert.match(settings, /ALERT_PRIORITY_FACTOR/);
+  assert.match(settings, /ALERT_PRIORITY_CAP_PAUSE_ENABLED/);
+  assert.match(settings, /ALERT_PRIORITY_CAP_PAUSE_DURATION_MIN/);
+  assert.match(settings, /ALERT_PRIORITY_CAP_PAUSE_COOLDOWN_MIN/);
   assert.match(page, /告警行为/);
+  assert.match(page, /允许封顶后暂停调度/);
+  assert.match(page, /暂停时间（分钟）/);
+  assert.match(page, /暂停后冷却（分钟）/);
 });

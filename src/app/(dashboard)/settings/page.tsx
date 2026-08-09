@@ -396,13 +396,18 @@ function RulesTab() {
 }
 
 function AlertBehaviorCard() {
-  const [values, setValues] = useState({ window: '5', count: '2', factor: '10' });
+  const [values, setValues] = useState({
+    window: '5', count: '2', factor: '10', pauseEnabled: true, pauseDuration: '1', pauseCooldown: '5',
+  });
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     fetch('/api/settings').then((response) => response.json()).then((settings) => setValues({
       window: settings.alert_confirmation_window_minutes ?? '5',
       count: settings.alert_confirmation_count ?? '2',
       factor: settings.alert_priority_factor ?? '10',
+      pauseEnabled: settings.alert_priority_cap_pause_enabled !== 'false',
+      pauseDuration: settings.alert_priority_cap_pause_duration_minutes ?? '1',
+      pauseCooldown: settings.alert_priority_cap_pause_cooldown_minutes ?? '5',
     })).catch(() => undefined);
   }, []);
   const save = async () => {
@@ -414,6 +419,9 @@ function AlertBehaviorCard() {
           alert_confirmation_window_minutes: values.window,
           alert_confirmation_count: values.count,
           alert_priority_factor: values.factor,
+          alert_priority_cap_pause_enabled: values.pauseEnabled,
+          alert_priority_cap_pause_duration_minutes: values.pauseDuration,
+          alert_priority_cap_pause_cooldown_minutes: values.pauseCooldown,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -426,12 +434,18 @@ function AlertBehaviorCard() {
     }
   };
   return <Card>
-    <CardHeader><CardTitle className="text-base">告警行为</CardTitle><CardDescription>配置规则确认窗口、命中次数和 Sub2API 优先级调整系数</CardDescription></CardHeader>
-    <CardContent className="grid gap-3 sm:grid-cols-3 lg:grid-cols-[1fr_1fr_1fr_auto] lg:items-end">
+    <CardHeader><CardTitle className="text-base">告警行为</CardTitle><CardDescription>配置确认、优先级调整和封顶暂停策略</CardDescription></CardHeader>
+    <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:items-end">
       <label className="space-y-1 text-sm"><span>确认窗口（分钟）</span><Input type="number" min="1" max="60" value={values.window} onChange={(event) => setValues({ ...values, window: event.target.value })} /></label>
       <label className="space-y-1 text-sm"><span>窗口内命中次数</span><Input type="number" min="1" max="20" value={values.count} onChange={(event) => setValues({ ...values, count: event.target.value })} /></label>
       <label className="space-y-1 text-sm"><span>优先级系数（0 禁用）</span><Input type="number" min="0" max="1000" value={values.factor} onChange={(event) => setValues({ ...values, factor: event.target.value })} /></label>
-      <Button onClick={() => void save()} disabled={saving}><Save data-icon="inline-start" />保存</Button>
+      <div className="flex h-10 items-center justify-between gap-3 rounded-md border px-3">
+        <Label htmlFor="priority-cap-pause-enabled">允许封顶后暂停调度</Label>
+        <Switch id="priority-cap-pause-enabled" checked={values.pauseEnabled} onCheckedChange={(checked) => setValues({ ...values, pauseEnabled: checked })} />
+      </div>
+      <label className="space-y-1 text-sm"><span>暂停时间（分钟）</span><Input type="number" min="1" max="60" disabled={!values.pauseEnabled} value={values.pauseDuration} onChange={(event) => setValues({ ...values, pauseDuration: event.target.value })} /></label>
+      <label className="space-y-1 text-sm"><span>暂停后冷却（分钟）</span><Input type="number" min="0" max="1440" disabled={!values.pauseEnabled} value={values.pauseCooldown} onChange={(event) => setValues({ ...values, pauseCooldown: event.target.value })} /></label>
+      <Button className="sm:col-start-2 lg:col-start-3" onClick={() => void save()} disabled={saving}><Save data-icon="inline-start" />保存</Button>
     </CardContent>
   </Card>;
 }

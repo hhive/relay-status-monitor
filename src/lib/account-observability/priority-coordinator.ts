@@ -1,6 +1,7 @@
 import { prisma } from '../db';
 import { calculateAdjustedPriority, calculateRestoredPriority } from './alert-behavior';
 import { createSub2ApiPriorityClient, Sub2ApiPriorityError, type Sub2ApiPriorityClient } from './sub2api-priority-client';
+import { pausePriorityCappedAccount } from './priority-cap-pause';
 
 export interface PriorityAdjustmentRecord {
   accountId: number;
@@ -37,6 +38,7 @@ export interface PriorityChangeLogEntry {
 export type PrioritySyncResult = 'applied' | 'capped' | 'disabled' | 'pending_retry' | 'unchanged';
 
 export type PriorityChangeLogger = (entry: PriorityChangeLogEntry) => void;
+export type PriorityCapHandler = (account: { id: number; sourceAccountId: string }) => Promise<unknown>;
 
 function errorCode(error: unknown): string {
   return error instanceof Sub2ApiPriorityError ? error.code : 'priority_request_failed';
@@ -62,6 +64,7 @@ export function createPriorityCoordinator(
   repository: PriorityAdjustmentRepository,
   client: Sub2ApiPriorityClient,
   logPriorityChange: PriorityChangeLogger = () => undefined,
+  onPriorityCapped: PriorityCapHandler = async () => undefined,
 ) {
   const logSuccessfulChange = (entry: PriorityChangeLogEntry): void => {
     try { logPriorityChange(entry); } catch { /* Logging must not invalidate a completed remote write. */ }
@@ -80,6 +83,11 @@ export function createPriorityCoordinator(
       lastError: null,
     };
     await repository.save(settled);
+    if (result === 'capped') {
+      try {
+        await onPriorityCapped({ id: settled.accountId, sourceAccountId: settled.sourceAccountId });
+      } catch { /* A scheduling pause failure must not recreate settled priority debt. */ }
+    }
     return { record: settled, result };
   };
 
@@ -316,6 +324,7 @@ function coordinator() {
     repository,
     createSub2ApiPriorityClient(),
     (entry) => { console.info(JSON.stringify(entry)); },
+    pausePriorityCappedAccount,
   );
   return productionCoordinator;
 }

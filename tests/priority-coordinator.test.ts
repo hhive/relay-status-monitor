@@ -33,6 +33,27 @@ test('priority client rejects an over-limit upstream response', async () => {
     error instanceof Sub2ApiPriorityError && error.code === 'invalid_priority_response');
 });
 
+test('priority client sends the configured pause duration and validates until', async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const client = createSub2ApiPriorityClient({
+    baseUrl: 'http://127.0.0.1:8080', secret: '0123456789abcdef0123456789abcdef',
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      return new Response(JSON.stringify({ temp_unschedulable_until: '2026-08-09T00:01:00.000Z' }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch,
+  });
+
+  assert.equal((await client.pauseScheduling('7', 12)).toISOString(), '2026-08-09T00:01:00.000Z');
+  assert.equal(requests[0].url, 'http://127.0.0.1:8080/api/v1/internal/relay-monitor/accounts/7/priority-cap-pause');
+  assert.equal(requests[0].init?.method, 'POST');
+  assert.equal(requests[0].init?.body, JSON.stringify({ duration_seconds: 720 }));
+  await assert.rejects(client.pauseScheduling('7', 0), /pause_duration/i);
+  await assert.rejects(client.pauseScheduling('7', 61), /pause_duration/i);
+  assert.equal(requests.length, 1);
+});
+
 test('priority coordinator multiplies every confirmed layer and divides every recovered layer', async () => {
   let stored: PriorityAdjustmentRecord | null = null;
   let activeSignals = 1;
@@ -109,16 +130,36 @@ test('priority coordinator rejects an over-limit layer without accumulating a no
     countActiveSignals: async () => activeSignals,
     listUnsettled: async () => stored ? [stored] : [],
   };
+  const cappedAccounts: string[] = [];
   const coordinator = createPriorityCoordinator(repository, {
     getPriority: async () => 900_000,
     setPriority: async () => { writeCount += 1; return 900_000; },
-  });
+  }, undefined, async (account) => { cappedAccounts.push(account.sourceAccountId); });
 
   const result = await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10);
   assert.equal(writeCount, 0);
   assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, []);
   assert.equal((stored as PriorityAdjustmentRecord | null)?.status, 'RESTORED');
   assert.equal(result, 'capped');
+  assert.deepEqual(cappedAccounts, ['9']);
+});
+
+test('priority cap pause failure does not turn capped settlement into a retry debt', async () => {
+  let stored: PriorityAdjustmentRecord | null = null;
+  const repository: PriorityAdjustmentRepository = {
+    find: async () => stored,
+    save: async (record) => { stored = { ...record }; },
+    countActiveSignals: async () => 1,
+    listUnsettled: async () => stored ? [stored] : [],
+  };
+  const coordinator = createPriorityCoordinator(repository, {
+    getPriority: async () => 1_000_000,
+    setPriority: async () => { throw new Error('must not write'); },
+  }, undefined, async () => { throw new Error('pause unavailable'); });
+
+  assert.equal(await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10), 'capped');
+  assert.equal((stored as PriorityAdjustmentRecord | null)?.status, 'RESTORED');
+  assert.equal((stored as PriorityAdjustmentRecord | null)?.lastError, null);
 });
 
 test('priority coordinator disables a zero-factor layer without accumulating a no-op', async () => {
@@ -211,15 +252,36 @@ test('priority retry reports a pending layer that becomes capped on the next cyc
     countActiveSignals: async () => 1,
     listUnsettled: async () => stored ? [stored] : [],
   };
+  const cappedAccounts: string[] = [];
   const coordinator = createPriorityCoordinator(repository, {
     getPriority: async () => 1_000_000,
     setPriority: async () => { throw new Error('capped retry must not write'); },
-  });
+  }, undefined, async (account) => { cappedAccounts.push(account.sourceAccountId); });
 
   const discarded = await coordinator.retry(new Map([[7, { id: 7, sourceAccountId: '9' }]]), 10);
 
   assert.deepEqual(discarded, [7]);
   assert.deepEqual((stored as PriorityAdjustmentRecord | null)?.appliedFactors, []);
+  assert.equal((stored as PriorityAdjustmentRecord | null)?.status, 'RESTORED');
+  assert.deepEqual(cappedAccounts, ['9']);
+});
+
+test('priority coordinator pauses after a CAS conflict recalculates to the cap', async () => {
+  let stored: PriorityAdjustmentRecord | null = null;
+  const cappedAccounts: string[] = [];
+  const repository: PriorityAdjustmentRepository = {
+    find: async () => stored,
+    save: async (record) => { stored = { ...record }; },
+    countActiveSignals: async () => 1,
+    listUnsettled: async () => stored ? [stored] : [],
+  };
+  const coordinator = createPriorityCoordinator(repository, {
+    getPriority: async () => 50,
+    setPriority: async () => { throw new Sub2ApiPriorityError('priority_conflict', 1_000_000); },
+  }, undefined, async (account) => { cappedAccounts.push(account.sourceAccountId); });
+
+  assert.equal(await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10), 'capped');
+  assert.deepEqual(cappedAccounts, ['9']);
   assert.equal((stored as PriorityAdjustmentRecord | null)?.status, 'RESTORED');
 });
 

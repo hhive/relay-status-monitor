@@ -13,6 +13,10 @@ export interface Sub2ApiPriorityClient {
   setPriority(sourceAccountId: string, expectedPriority: number, targetPriority: number): Promise<number>;
 }
 
+export interface Sub2ApiRelayMonitorClient extends Sub2ApiPriorityClient {
+  pauseScheduling(sourceAccountId: string, durationMinutes: number): Promise<Date>;
+}
+
 function accountId(value: string): string {
   if (!/^[1-9]\d*$/.test(value)) throw new Sub2ApiPriorityError('invalid_account_id');
   return value;
@@ -29,13 +33,13 @@ export function createSub2ApiPriorityClient(input: {
   baseUrl?: string;
   secret?: string;
   fetchImpl?: typeof fetch;
-} = {}): Sub2ApiPriorityClient {
+} = {}): Sub2ApiRelayMonitorClient {
   const baseUrl = (input.baseUrl ?? process.env.SUB2API_PRIORITY_API_BASE_URL ?? '').replace(/\/+$/, '');
   const secret = input.secret ?? process.env.SUB2API_RELAY_MONITOR_PRIORITY_SECRET ?? '';
   const fetchImpl = input.fetchImpl ?? fetch;
   if (!/^https?:\/\//.test(baseUrl) || secret.trim().length < 32) throw new Sub2ApiPriorityError('priority_integration_unavailable');
-  const request = async (sourceAccountId: string, init?: RequestInit): Promise<Record<string, unknown>> => {
-    const response = await fetchImpl(`${baseUrl}${PRIORITY_PATH}/${accountId(sourceAccountId)}/priority`, {
+  const request = async (sourceAccountId: string, suffix: string, init?: RequestInit): Promise<Record<string, unknown>> => {
+    const response = await fetchImpl(`${baseUrl}${PRIORITY_PATH}/${accountId(sourceAccountId)}/${suffix}`, {
       ...init,
       headers: { 'Content-Type': 'application/json', 'X-Sub2API-Relay-Monitor-Secret': secret },
       signal: AbortSignal.timeout(5_000),
@@ -46,14 +50,27 @@ export function createSub2ApiPriorityClient(input: {
     return body;
   };
   return {
-    getPriority: async (sourceAccountId) => priority((await request(sourceAccountId)).priority, 0),
+    getPriority: async (sourceAccountId) => priority((await request(sourceAccountId, 'priority')).priority, 0),
     setPriority: async (sourceAccountId, expectedPriority, targetPriority) => {
       priority(expectedPriority, 0);
       priority(targetPriority, 1);
-      const body = await request(sourceAccountId, {
+      const body = await request(sourceAccountId, 'priority', {
         method: 'PUT', body: JSON.stringify({ expected_priority: expectedPriority, target_priority: targetPriority }),
       });
       return priority(body.priority, 1);
+    },
+    pauseScheduling: async (sourceAccountId, durationMinutes) => {
+      if (!Number.isSafeInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 60) {
+        throw new Sub2ApiPriorityError('invalid_pause_duration');
+      }
+      const body = await request(sourceAccountId, 'priority-cap-pause', {
+        method: 'POST', body: JSON.stringify({ duration_seconds: durationMinutes * 60 }),
+      });
+      const until = typeof body.temp_unschedulable_until === 'string'
+        ? new Date(body.temp_unschedulable_until)
+        : new Date(Number.NaN);
+      if (!Number.isFinite(until.getTime())) throw new Sub2ApiPriorityError('invalid_pause_response');
+      return until;
     },
   };
 }

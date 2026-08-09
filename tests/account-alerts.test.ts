@@ -76,7 +76,10 @@ function harness(input: {
       ? [[account.id, input.account.balanceHistory]]
       : []),
     loadDisabledGroupIds: async () => input.disabledGroupIds ?? new Set(),
-    loadBehaviorSettings: async () => ({ confirmationWindowMinutes: 5, confirmationCount: input.confirmationCount ?? 1, priorityFactor: 10 }),
+    loadBehaviorSettings: async () => ({
+      confirmationWindowMinutes: 5, confirmationCount: input.confirmationCount ?? 1, priorityFactor: 10,
+      priorityCapPauseEnabled: true, priorityCapPauseDurationMinutes: 1, priorityCapPauseCooldownMinutes: 5,
+    }),
     recordTriggeredSignal: async ({ ruleId, now, settings, allowStart }) => {
       const current = signalCandidates.get(ruleId);
       if (!current && !allowStart) return { confirmed: false, activated: false, deactivated: false };
