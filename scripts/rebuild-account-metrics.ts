@@ -1,3 +1,4 @@
+import { disconnectSub2ApiReadonlyClients } from '../src/lib/account-observability/sub2api-readonly';
 import { runAccountMetricRebuild } from '../src/lib/account-observability/collector';
 
 function argument(name: '--start' | '--end'): string {
@@ -21,8 +22,12 @@ function utcDate(value: string, name: string): Date {
 async function main(): Promise<void> {
   const start = utcDate(argument('--start'), '--start');
   const end = utcDate(argument('--end'), '--end');
-  const result = await runAccountMetricRebuild(start, end);
-  console.log(JSON.stringify(result));
+  try {
+    const result = await runAccountMetricRebuild(start, end);
+    console.log(JSON.stringify(result));
+  } finally {
+    await disconnectSub2ApiReadonlyClients();
+  }
 }
 
 main().catch((error: unknown) => {

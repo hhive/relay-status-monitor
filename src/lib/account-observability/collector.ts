@@ -218,23 +218,17 @@ export async function runAccountObservabilityCycle(now = new Date()): Promise<{ 
   } catch (error) {
     await evaluateAccountAlerts(now).catch(() => undefined);
     throw error;
-  } finally {
-    await client.$disconnect();
   }
 }
 
 export async function runAccountMetricRebuild(start: Date, end: Date): Promise<MetricWindowResult> {
   if (!process.env.SUB2API_DATABASE_URL) throw new Error('SUB2API_DATABASE_URL is required');
   const client = createSub2ApiReadonlyClient();
-  try {
-    await querySchemaCapabilities(client);
-    return await rebuildAccountMetrics(
-      start,
-      end,
-      productionMetricRunner(client, 'REBUILD'),
-      async () => { await refreshAccountMetricSnapshots(new Date()); },
-    );
-  } finally {
-    await client.$disconnect();
-  }
+  await querySchemaCapabilities(client);
+  return rebuildAccountMetrics(
+    start,
+    end,
+    productionMetricRunner(client, 'REBUILD'),
+    async () => { await refreshAccountMetricSnapshots(new Date()); },
+  );
 }

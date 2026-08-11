@@ -10,6 +10,8 @@ import {
   USAGE_PROJECTION_SQL,
   assertSchemaCapabilities,
   buildWindowParams,
+  createSub2ApiReadonlyClient,
+  disconnectSub2ApiReadonlyClients,
 } from '../src/lib/account-observability/sub2api-readonly';
 
 test('readonly adapter selects only approved projections and never credential or body columns', () => {
@@ -58,4 +60,15 @@ test('readonly adapter binds a UTC window and schema capability failures are exp
   assert.throws(() => assertSchemaCapabilities({ usageLogs: false, opsErrorLogs: true, accounts: true, accountGroups: true, groups: true, balanceCredentials: true }), /schema/i);
   assert.throws(() => assertSchemaCapabilities({ usageLogs: true, opsErrorLogs: true, accounts: true, accountGroups: false, groups: true, balanceCredentials: true }), /schema/i);
   assert.doesNotThrow(() => assertSchemaCapabilities({ usageLogs: true, opsErrorLogs: true, accounts: true, accountGroups: true, groups: true, balanceCredentials: true }));
+});
+
+test('readonly Prisma clients are reused by datasource URL and can be closed together', async () => {
+  const urlA = 'postgresql://relay-monitor-test:secret@127.0.0.1:1/relay_monitor_a?schema=public';
+  const urlB = 'postgresql://relay-monitor-test:secret@127.0.0.1:1/relay_monitor_b?schema=public';
+  const first = createSub2ApiReadonlyClient(urlA);
+  assert.equal(createSub2ApiReadonlyClient(urlA), first);
+  assert.notEqual(createSub2ApiReadonlyClient(urlB), first);
+  await disconnectSub2ApiReadonlyClients();
+  assert.notEqual(createSub2ApiReadonlyClient(urlA), first);
+  await disconnectSub2ApiReadonlyClients();
 });

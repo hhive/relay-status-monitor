@@ -134,11 +134,27 @@ export type ReadonlyClient = ReadonlyTransaction & {
   $disconnect: () => Promise<void>;
 };
 
+const globalForReadonlyClients = globalThis as unknown as {
+  relayMonitorReadonlyClients?: Map<string, PrismaClient>;
+};
+
+const readonlyClients = globalForReadonlyClients.relayMonitorReadonlyClients ??= new Map();
+
 const STATEMENT_TIMEOUT_MS = 10_000;
 
 export function createSub2ApiReadonlyClient(url = process.env.SUB2API_DATABASE_URL): PrismaClient {
   if (!url) throw new Error('SUB2API_DATABASE_URL is required for account observability');
-  return new PrismaClient({ datasourceUrl: url, log: ['error'] });
+  const existing = readonlyClients.get(url);
+  if (existing) return existing;
+  const client = new PrismaClient({ datasourceUrl: url, log: ['error'] });
+  readonlyClients.set(url, client);
+  return client;
+}
+
+export async function disconnectSub2ApiReadonlyClients(): Promise<void> {
+  const clients = [...readonlyClients.values()];
+  readonlyClients.clear();
+  await Promise.all(clients.map((client) => client.$disconnect()));
 }
 
 export async function withReadonlyTransaction<T>(
