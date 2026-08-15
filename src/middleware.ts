@@ -12,6 +12,7 @@ import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSession } from '@/lib/admin-sessi
 const COOKIE_NAME = 'rsm_session';
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const ADMIN_CSRF_TOKEN_BYTES = 36;
+const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? '').replace(/\/+$/, '');
 const PUBLIC_PATHS = new Set([
   '/login',
   '/api/auth/login',
@@ -21,7 +22,7 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const pathname = stripBasePath(request.nextUrl.pathname);
 
   try {
     const adminToken = request.cookies.get(ADMIN_SESSION_COOKIE_NAME)?.value;
@@ -84,7 +85,7 @@ function expectedRequestOrigin(request: NextRequest): string | null {
 
 function redirectToLogin(request: NextRequest) {
   // API 请求返回 401，页面请求跳转登录
-  if (request.nextUrl.pathname.startsWith('/api/')) {
+  if (stripBasePath(request.nextUrl.pathname).startsWith('/api/')) {
     return NextResponse.json({ error: '未登录' }, { status: 401 });
   }
   const loginUrl = request.nextUrl.clone();
@@ -94,6 +95,12 @@ function redirectToLogin(request: NextRequest) {
     safeRedirectPath(request.nextUrl.pathname + request.nextUrl.search),
   );
   return NextResponse.redirect(loginUrl);
+}
+
+function stripBasePath(pathname: string): string {
+  if (!BASE_PATH) return pathname;
+  if (pathname === BASE_PATH) return '/';
+  return pathname.startsWith(`${BASE_PATH}/`) ? pathname.slice(BASE_PATH.length) : pathname;
 }
 
 export const config = {

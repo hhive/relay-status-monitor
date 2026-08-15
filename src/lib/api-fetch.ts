@@ -7,6 +7,14 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 let csrfToken: string | undefined;
 
+const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? '').replace(/\/+$/, '');
+
+function withBasePath(input: RequestInfo | URL): RequestInfo | URL {
+  if (!BASE_PATH || input instanceof Request || input instanceof URL) return input;
+  if (!input.startsWith('/') || input.startsWith(`${BASE_PATH}/`)) return input;
+  return `${BASE_PATH}${input}`;
+}
+
 export function resetApiFetchCache(): void {
   csrfToken = undefined;
 }
@@ -14,7 +22,7 @@ export function resetApiFetchCache(): void {
 async function loadCsrfToken(): Promise<string | undefined> {
   if (csrfToken) return csrfToken;
 
-  const response = await fetch('/api/auth/me');
+  const response = await fetch(withBasePath('/api/auth/me'));
   if (!response.ok) {
     resetApiFetchCache();
     return undefined;
@@ -40,7 +48,7 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
     }
   }
 
-  const response = await fetch(input, requestInit);
+  const response = await fetch(withBasePath(input), requestInit);
   if (response.status === 401) resetApiFetchCache();
   return response;
 }

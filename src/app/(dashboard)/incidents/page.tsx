@@ -53,7 +53,7 @@ export default function IncidentsPage() {
     if (metric !== 'all') params.set('metric', metric);
     if (severity !== 'all') params.set('severity', severity);
     try {
-      const response = await fetch(`/api/account-alert-events?${params}`);
+      const response = await apiFetch(`/api/account-alert-events?${params}`);
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || '获取账号告警失败');
       if (isCurrent()) setEvents(Array.isArray(body) ? body : []);

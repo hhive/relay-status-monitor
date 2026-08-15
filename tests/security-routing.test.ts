@@ -326,7 +326,7 @@ test('auth endpoints expose the session union safely and keep password local-onl
 
 test('admin session account UI disables password changes and points to Sub2API', () => {
   const settings = source('src/app/(dashboard)/settings/page.tsx');
-  assert.match(settings, /fetch\(['"]\/api\/auth\/me['"]\)/);
+  assert.match(settings, /(?:fetch|apiFetch)\(['"]\/api\/auth\/me['"]\)/);
   assert.match(settings, /source\s*===\s*['"]sub2api['"]/);
   assert.match(settings, /请在 Sub2API 修改管理员凭据/);
   assert.match(settings, /disabled=\{[^}]*isSub2Api/);

@@ -401,7 +401,7 @@ function AlertBehaviorCard() {
   });
   const [saving, setSaving] = useState(false);
   useEffect(() => {
-    fetch('/api/settings').then((response) => response.json()).then((settings) => setValues({
+    apiFetch('/api/settings').then((response) => response.json()).then((settings) => setValues({
       window: settings.alert_confirmation_window_minutes ?? '5',
       count: settings.alert_confirmation_count ?? '2',
       factor: settings.alert_priority_factor ?? '10',
@@ -487,7 +487,7 @@ function GroupAlertsTab() {
 
   useEffect(() => {
     let active = true;
-    fetch('/api/group-alert-settings')
+    apiFetch('/api/group-alert-settings')
       .then(async (response) => {
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : '分组告警加载失败');
@@ -583,7 +583,7 @@ function ChannelsTab() {
   const fetchChannels = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/alert-channels');
+      const res = await apiFetch('/api/alert-channels');
       const data = await res.json();
       setChannels(Array.isArray(data) ? data : []);
     } catch {
@@ -798,7 +798,7 @@ function SystemTab() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    fetch('/api/settings')
+    apiFetch('/api/settings')
       .then((r) => r.json())
       .then((data) => {
         setSettings(data ?? {});
@@ -986,7 +986,7 @@ function PasswordTab() {
   const [isSub2Api, setIsSub2Api] = useState(false);
 
   useEffect(() => {
-    fetch('/api/auth/me')
+    apiFetch('/api/auth/me')
       .then((response) => response.json())
       .then((session) => setIsSub2Api(session?.source === 'sub2api'))
       .catch(() => setIsSub2Api(false));
