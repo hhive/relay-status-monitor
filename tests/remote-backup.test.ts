@@ -9,6 +9,9 @@ test('backup config validates safe path, time, port and retention', () => {
   for (const patch of [{ path: 'relative' }, { path: '/srv/../etc' }, { path: '/srv/backup dir' }, { time: '3:15' }, { retention: 0 }, { port: 70000 }]) {
     assert.throws(() => validateBackupConfig({ ...config, ...patch }));
   }
+  for (const patch of [{ host: '-oProxyCommand=bad' }, { host: 'bad host' }, { username: '-oProxyCommand=bad' }, { username: 'user@host' }]) {
+    assert.throws(() => validateBackupConfig({ ...config, ...patch }));
+  }
 });
 
 test('backup names are fixed prefix and dump suffix', () => {

@@ -31,8 +31,8 @@ export function validateBackupConfig(input: Partial<RemoteBackupConfig>): Remote
   const time = String(input.time ?? '02:00').trim();
   const port = Number(input.port ?? 22);
   const retention = Number(input.retention ?? 7);
-  if (!host || /[\r\n]/.test(host) || host.length > 253) throw new Error('备份服务器地址无效');
-  if (!username || /[\r\n]/.test(username)) throw new Error('备份用户名无效');
+  if (!host || host.length > 253 || !/^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:]+\])$/.test(host)) throw new Error('备份服务器地址无效');
+  if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(username)) throw new Error('备份用户名无效');
   if (!path || !path.startsWith('/') || path.includes('..') || !/^\/[A-Za-z0-9_./-]*$/.test(path)) throw new Error('备份路径必须为绝对安全路径');
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error('备份时间无效');
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('备份端口无效');

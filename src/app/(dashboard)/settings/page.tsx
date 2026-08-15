@@ -15,6 +15,7 @@ import {
   AlertCircle,
   Webhook,
   ShieldCheck,
+  DatabaseBackup,
   Settings,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -103,7 +104,7 @@ export default function SettingsPage() {
       <PageHeader icon={Settings} title="设置" />
 
       <Tabs defaultValue="rules" className="w-full">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-5">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-6">
           <TabsTrigger value="rules">
             <BellRing />
             告警规则
@@ -119,6 +120,10 @@ export default function SettingsPage() {
           <TabsTrigger value="system">
             <SlidersHorizontal />
             系统配置
+          </TabsTrigger>
+          <TabsTrigger value="backup">
+            <DatabaseBackup />
+            数据备份
           </TabsTrigger>
           <TabsTrigger value="password">
             <KeyRound />
@@ -137,6 +142,9 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="system" className="mt-4">
           <SystemTab />
+        </TabsContent>
+        <TabsContent value="backup" className="mt-4">
+          <BackupTab />
         </TabsContent>
         <TabsContent value="password" className="mt-4">
           <PasswordTab />
@@ -946,14 +954,50 @@ function SystemTab() {
         </CardContent>
       </Card>
 
-      <RemoteBackupCard settings={settings} onSettingsChange={setSettings} />
-
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
         <ShieldCheck className="h-4 w-4" />
         定时采集密钥仅由服务器环境变量管理。
       </p>
     </div>
   );
+}
+
+function BackupTab() {
+  const [settings, setSettings] = useState<Record<string, string | boolean>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch('/api/remote-backup?limit=10&offset=0')
+      .then((response) => response.json())
+      .then((body) => {
+        const config = body.config;
+        if (config) {
+          setSettings({
+            remote_backup_enabled: config.enabled,
+            remote_backup_host: String(config.host ?? ''),
+            remote_backup_port: String(config.port ?? 22),
+            remote_backup_username: String(config.username ?? ''),
+            remote_backup_path: String(config.path ?? ''),
+            remote_backup_time: String(config.time ?? '02:00'),
+            remote_backup_retention: String(config.retention ?? 7),
+            remote_backup_password_configured: config.passwordConfigured === true,
+          });
+        }
+      })
+      .catch(() => toast.error('加载远程备份配置失败'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <Card className="flex h-32 items-center justify-center text-muted-foreground">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        加载中…
+      </Card>
+    );
+  }
+
+  return <RemoteBackupCard settings={settings} onSettingsChange={setSettings} />;
 }
 
 function RemoteBackupCard({
@@ -1000,13 +1044,13 @@ function RemoteBackupCard({
         retention: value('remote_backup_retention', '7'),
       };
       if (password.trim()) payload.password = password;
-      const response = await apiFetch('/api/settings', {
+      const response = await apiFetch('/api/remote-backup', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || '保存远程备份配置失败');
       setPassword('');
-      updateBackup('remote_backup_password_configured', true);
+      updateBackup('remote_backup_password_configured', body.config?.passwordConfigured === true);
       toast.success('远程备份配置已保存');
     } catch (error) {
       toast.error((error as Error).message);

@@ -3,8 +3,13 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 const page = fs.readFileSync(new URL('../src/app/(dashboard)/settings/page.tsx', import.meta.url), 'utf8');
+const backupCard = page.slice(page.indexOf('function RemoteBackupCard'), page.indexOf('function Field'));
 
 test('settings page exposes remote backup configuration without rendering password', () => {
+  assert.match(page, /TabsTrigger value="backup"/);
+  assert.match(page, /数据备份/);
+  assert.match(page, /TabsContent value="backup"/);
+  assert.match(page, /function BackupTab/);
   assert.match(page, /function RemoteBackupCard/);
   for (const key of ['remote_backup_host', 'remote_backup_port', 'remote_backup_username', 'remote_backup_path', 'remote_backup_time', 'remote_backup_retention']) {
     assert.match(page, new RegExp(key));
@@ -13,6 +18,8 @@ test('settings page exposes remote backup configuration without rendering passwo
   assert.match(page, /type="password"/);
   assert.match(page, /留空表示不修改/);
   assert.ok(page.includes('/api/remote-backup'));
+  assert.match(backupCard, /apiFetch\('\/api\/remote-backup', \{\s*method: 'PUT'/);
+  assert.doesNotMatch(backupCard, /apiFetch\('\/api\/settings'/);
   assert.ok(page.includes('/api/remote-backup/${kind}'));
   assert.ok(page.includes("runAction('test')"));
   assert.ok(page.includes("runAction('run')"));
