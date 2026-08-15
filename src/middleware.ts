@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { safeRedirectPath } from '@/lib/security';
+import { publicOrigin } from '@/lib/public-origin';
 import { verifySessionToken } from '@/lib/session-token';
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSession } from '@/lib/admin-session-token';
 
@@ -18,6 +19,7 @@ const PUBLIC_PATHS = new Set([
   '/api/auth/login',
   '/api/auth/logout',
   '/api/cron/collect',
+  '/api/cron/backup',
   '/api/sub2api/admin-launch',
 ]);
 
@@ -88,7 +90,7 @@ function redirectToLogin(request: NextRequest) {
   if (stripBasePath(request.nextUrl.pathname).startsWith('/api/')) {
     return NextResponse.json({ error: '未登录' }, { status: 401 });
   }
-  const loginUrl = request.nextUrl.clone();
+  const loginUrl = new URL(request.nextUrl.pathname, publicOrigin(request.url));
   loginUrl.pathname = '/login';
   loginUrl.searchParams.set(
     'redirect',

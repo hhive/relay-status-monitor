@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { adminSsoFailureReason, type AdminClaims, type AdminSsoFailureReason } from '@/lib/admin-sso';
+import { publicOrigin } from '@/lib/public-origin';
 
 export type AdminLaunchFailureStage =
   | 'token_validation'
@@ -47,7 +48,7 @@ export function createAdminLaunchHandler(dependencies: AdminLaunchDependencies) 
       stage = 'session_creation';
       const sessionToken = await dependencies.createAdminSession(claims, sessionTtlSeconds);
       stage = 'session_attachment';
-      const response = NextResponse.redirect(new URL('/', request.url), 303);
+      const response = NextResponse.redirect(new URL('/', publicOrigin(request.url)), 303);
       dependencies.attachAdminSession(response, sessionToken, sessionTtlSeconds);
       return protectLaunchResponse(response);
     } catch (error) {

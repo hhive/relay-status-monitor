@@ -12,6 +12,7 @@ export async function GET() {
   for (const setting of settings) {
     if (isEditableSettingKey(setting.key)) map[setting.key] = setting.value;
   }
+  map.remote_backup_password_configured = Boolean((await prisma.setting.findUnique({ where: { key: 'remote_backup_password' } }))?.value);
   map.cron_secret_configured = Boolean(process.env.CRON_SECRET?.trim());
   return NextResponse.json(map);
 }

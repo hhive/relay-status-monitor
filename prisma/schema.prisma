@@ -266,6 +266,21 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+model RemoteBackupRecord {
+  id           Int      @id @default(autoincrement())
+  status       String
+  startedAt    DateTime @default(now())
+  finishedAt   DateTime?
+  fileName     String?
+  fileSize     BigInt?
+  deletedCount Int      @default(0)
+  deletedFiles Json?
+  errorMessage String?  @db.Text
+
+  @@index([startedAt])
+  @@index([status, startedAt])
+}
+
 model GroupAlertSetting {
   groupId      Int      @id
   alertEnabled Boolean  @default(true)

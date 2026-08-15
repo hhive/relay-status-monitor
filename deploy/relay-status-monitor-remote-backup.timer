@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Relay Status Monitor remote backup schedule every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+Unit=relay-status-monitor-remote-backup.service
+
+[Install]
+WantedBy=timers.target
