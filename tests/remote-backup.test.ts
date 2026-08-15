@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { backupFileName, parseSftpModifiedAt, postgresCommandEnvironment, selectBackupDeletions, SUB2API_EXCLUDED_TABLE_DATA, validateBackupConfig, runRemoteBackup } from '../src/lib/remote-backup';
 
@@ -47,4 +48,12 @@ test('backup removes local temporary state after successful upload and cleanup',
   assert.equal(result.deleted.length, 1);
   assert.equal(calls.filter((call) => call.startsWith('upload:')).length, 1);
   assert.deepEqual(calls.filter((call) => call.startsWith('remove:')).length, 1);
+});
+
+test('disabled cron skips before loading an unconfigured backup target', () => {
+  const route = readFileSync(new URL('../src/app/api/cron/backup/route.ts', import.meta.url), 'utf8');
+  const enabledCheck = route.indexOf('SettingKeys.BACKUP_ENABLED');
+  const configLoad = route.indexOf('loadBackupConfig()');
+  assert.ok(enabledCheck >= 0, 'cron route must check the enabled setting');
+  assert.ok(enabledCheck < configLoad, 'disabled backup must skip before loading credentials');
 });
