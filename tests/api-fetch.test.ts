@@ -5,6 +5,9 @@ import { apiFetch, resetApiFetchCache } from '../src/lib/api-fetch';
 
 type FetchCall = { input: RequestInfo | URL; init?: RequestInit };
 
+const basePath = (process.env.NEXT_PUBLIC_BASE_PATH ?? '').replace(/\/+$/, '');
+const path = (value: string) => `${basePath}${value}`;
+
 function response(status = 200, body: unknown = { ok: true }): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -24,7 +27,7 @@ test('api fetch sends GET and HEAD directly without loading auth state', async (
   try {
     await apiFetch('/api/items');
     await apiFetch('/api/items', { method: 'HEAD' });
-    assert.deepEqual(calls.map(({ input }) => input), ['/api/items', '/api/items']);
+    assert.deepEqual(calls.map(({ input }) => input), [path('/api/items'), path('/api/items')]);
     assert.deepEqual(calls.map(({ init }) => init?.method), [undefined, 'HEAD']);
   } finally {
     globalThis.fetch = originalFetch;
@@ -37,7 +40,7 @@ test('api fetch lazily adds the SSO csrf token to writes and preserves caller he
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     calls.push({ input, init });
-    if (input === '/api/auth/me') {
+    if (input === path('/api/auth/me')) {
       return response(200, { ok: true, source: 'sub2api', csrfToken: 'csrf-from-safe-dto' });
     }
     return response();
@@ -52,9 +55,9 @@ test('api fetch lazily adds the SSO csrf token to writes and preserves caller he
     await apiFetch('/api/items/1', { method: 'DELETE' });
 
     assert.deepEqual(calls.map(({ input }) => input), [
-      '/api/auth/me',
-      '/api/items',
-      '/api/items/1',
+      path('/api/auth/me'),
+      path('/api/items'),
+      path('/api/items/1'),
     ]);
     const firstWriteHeaders = new Headers(calls[1].init?.headers);
     assert.equal(firstWriteHeaders.get('Content-Type'), 'application/json');
@@ -75,7 +78,7 @@ test('api fetch leaves local-session writes tokenless and clears cached SSO stat
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     calls.push({ input, init });
-    if (input === '/api/auth/me') {
+    if (input === path('/api/auth/me')) {
       authLoads += 1;
       return response(200, authLoads === 1
         ? { ok: true, source: 'local' }
