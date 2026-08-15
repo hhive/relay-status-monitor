@@ -12,7 +12,7 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   const auth = await requireApiSession(); if (!auth.ok) return auth.response;
   try { const body = await request.json(); const config = await saveBackupConfig(body); return NextResponse.json({ config: redactBackupConfig(config) }); }
-  catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : '备份配置无效' }, { status: 400 }); }
+  catch { return NextResponse.json({ error: '备份配置无效' }, { status: 400 }); }
 }
 
 export async function POST() {
