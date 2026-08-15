@@ -8,6 +8,8 @@ const backupCard = page.slice(page.indexOf('function RemoteBackupCard'), page.in
 test('settings page exposes remote backup configuration without rendering password', () => {
   assert.match(page, /TabsTrigger value="backup"/);
   assert.match(page, /数据备份/);
+  assert.match(page, /\.sql\.gz/);
+  assert.match(page, /psql/);
   assert.match(page, /TabsContent value="backup"/);
   assert.match(page, /function BackupTab/);
   assert.match(page, /function RemoteBackupCard/);
