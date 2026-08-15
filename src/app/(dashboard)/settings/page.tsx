@@ -421,7 +421,7 @@ function AlertBehaviorCard() {
   const save = async () => {
     setSaving(true);
     try {
-      const response = await apiFetch('/api/remote-backup', {
+      const response = await apiFetch('/api/settings', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           alert_confirmation_window_minutes: values.window,
@@ -1100,7 +1100,7 @@ function RemoteBackupCard({
         </div>
         {(settings.remote_backup_last_at || settings.remote_backup_last_status || settings.remote_backup_last_error) && <p className="text-xs text-muted-foreground">最近执行：{value('remote_backup_last_at', '未知')} · {value('remote_backup_last_status', '未知')}{settings.remote_backup_last_file ? ` · ${value('remote_backup_last_file', '')}` : ''}{settings.remote_backup_last_error ? ` · ${value('remote_backup_last_error', '')}` : ''}</p>}
         <div className="flex items-center justify-between gap-3"><Select value={recordStatus} onValueChange={(next) => { setRecordStatus(next); setRecordOffset(0); }}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ALL">全部记录</SelectItem><SelectItem value="SUCCEEDED">成功</SelectItem><SelectItem value="FAILED">失败</SelectItem><SelectItem value="RUNNING">执行中</SelectItem></SelectContent></Select><span className="text-xs text-muted-foreground">共 {recordTotal} 条</span></div>
-        {records.length > 0 && <div className="overflow-x-auto rounded-md border"><table className="w-full text-left text-xs"><thead><tr className="border-b"><th className="px-3 py-2">时间</th><th className="px-3 py-2">状态</th><th className="px-3 py-2">文件</th><th className="px-3 py-2">清理</th></tr></thead><tbody>{records.map((record) => <tr key={record.id} className="border-b last:border-0"><td className="px-3 py-2">{new Date(record.startedAt).toLocaleString()}</td><td className="px-3 py-2">{record.status}</td><td className="px-3 py-2">{record.fileName ?? record.errorMessage ?? '-'}</td><td className="px-3 py-2">{record.deletedCount}</td></tr>)}</tbody></table></div>}
+        {records.length > 0 && <div className="overflow-x-auto rounded-md border"><table className="w-full text-left text-xs"><thead><tr className="border-b"><th className="px-3 py-2">时间</th><th className="px-3 py-2">状态</th><th className="px-3 py-2">文件</th><th className="px-3 py-2">大小</th><th className="px-3 py-2">清理</th></tr></thead><tbody>{records.map((record) => <tr key={record.id} className="border-b last:border-0"><td className="px-3 py-2">{new Date(record.startedAt).toLocaleString()}</td><td className="px-3 py-2">{record.status}</td><td className="px-3 py-2">{record.fileName ?? record.errorMessage ?? '-'}</td><td className="px-3 py-2">{record.fileSize == null ? '-' : `${(record.fileSize / (1024 * 1024)).toFixed(2)} MB`}</td><td className="px-3 py-2">{record.deletedCount}</td></tr>)}</tbody></table></div>}
         <div className="flex justify-end gap-2"><Button size="sm" variant="outline" disabled={recordOffset === 0} onClick={() => setRecordOffset(Math.max(0, recordOffset - 10))}>上一页</Button><Button size="sm" variant="outline" disabled={recordOffset + 10 >= recordTotal} onClick={() => setRecordOffset(recordOffset + 10)}>下一页</Button></div>
         {message && <p className="text-sm text-muted-foreground">{message}</p>}
         <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">

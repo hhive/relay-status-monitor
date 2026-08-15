@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const page = fs.readFileSync(new URL('../src/app/(dashboard)/settings/page.tsx', import.meta.url), 'utf8');
 const backupCard = page.slice(page.indexOf('function RemoteBackupCard'), page.indexOf('function Field'));
+const alertBehaviorCard = page.slice(page.indexOf('function AlertBehaviorCard'), page.indexOf('function RuleNumberInput'));
 
 test('settings page exposes remote backup configuration without rendering password', () => {
   assert.match(page, /TabsTrigger value="backup"/);
@@ -33,4 +34,16 @@ test('remote backup form includes daily schedule and retention controls', () => 
   assert.match(page, /超过数量后清理最早的备份/);
   assert.match(page, /启用每日备份/);
   assert.match(page, /Sub2API PostgreSQL/);
+});
+
+test('remote backup records display file sizes in MB with an empty-value fallback', () => {
+  assert.match(backupCard, /<th className="px-3 py-2">大小<\/th>/);
+  assert.match(backupCard, /fileSize \/ \(1024 \* 1024\)/);
+  assert.match(backupCard, /toFixed\(2\)\} MB/);
+  assert.match(backupCard, /record\.fileSize == null \? '-' :/);
+});
+
+test('alert behavior save uses the settings endpoint instead of the backup endpoint', () => {
+  assert.match(alertBehaviorCard, /apiFetch\('\/api\/settings', \{/);
+  assert.doesNotMatch(alertBehaviorCard, /apiFetch\('\/api\/remote-backup'/);
 });
