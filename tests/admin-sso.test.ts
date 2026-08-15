@@ -213,6 +213,25 @@ test('admin sso landing requires one non-empty token and redirects after attachi
   assert.deepEqual(calls, ['exchange:one-time-ticket', 'create', 'attach']);
 });
 
+test('admin sso landing uses the configured public origin', async () => {
+  const previous = process.env.NEXT_PUBLIC_APP_URL;
+  process.env.NEXT_PUBLIC_APP_URL = 'https://cmonitor.xiaoni-ai.top';
+  try {
+    const handler = createAdminLaunchHandler({
+      exchangeAdminTicket: async () => ({ claims: validClaims, sessionTtlSeconds: 600 }),
+      createAdminSession: async () => 'signed-admin-session',
+      attachAdminSession: () => undefined,
+    });
+    const response = await handler(new Request(
+      'http://127.0.0.1:3305/api/sub2api/admin-launch?token=one-time-ticket',
+    ));
+    assert.equal(response.headers.get('location'), 'https://cmonitor.xiaoni-ai.top/');
+  } finally {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+    else process.env.NEXT_PUBLIC_APP_URL = previous;
+  }
+});
+
 test('admin sso landing can sign and attach the real isolated admin cookie', async () => {
   const previousSessionSecret = process.env.SESSION_SECRET;
   const previousEncryptionKey = process.env.APP_ENCRYPTION_KEY;

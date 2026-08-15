@@ -1,0 +1,22 @@
+[Unit]
+Description=Run Relay Status Monitor remote backup when due
+After=network-online.target relay-status-monitor.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=relay_monitor
+Group=relay_monitor
+EnvironmentFile=/etc/relay-status-monitor.env
+Environment=RELAY_MONITOR_LOCAL_ORIGIN=http://127.0.0.1:3305
+WorkingDirectory=/opt/relay-status-monitor/current
+ExecStart=/usr/bin/node /opt/relay-status-monitor/current/deploy/relay-status-monitor-remote-backup.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077

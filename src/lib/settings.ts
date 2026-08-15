@@ -55,12 +55,24 @@ export const SettingKeys = {
   ALERT_PRIORITY_CAP_PAUSE_ENABLED: 'alert_priority_cap_pause_enabled',
   ALERT_PRIORITY_CAP_PAUSE_DURATION_MIN: 'alert_priority_cap_pause_duration_minutes',
   ALERT_PRIORITY_CAP_PAUSE_COOLDOWN_MIN: 'alert_priority_cap_pause_cooldown_minutes',
+  BACKUP_ENABLED: 'remote_backup_enabled',
+  BACKUP_HOST: 'remote_backup_host',
+  BACKUP_PORT: 'remote_backup_port',
+  BACKUP_USERNAME: 'remote_backup_username',
+  BACKUP_PASSWORD: 'remote_backup_password',
+  BACKUP_PATH: 'remote_backup_path',
+  BACKUP_TIME: 'remote_backup_time',
+  BACKUP_RETENTION: 'remote_backup_retention',
+  BACKUP_LAST_STATUS: 'remote_backup_last_status',
+  BACKUP_LAST_AT: 'remote_backup_last_at',
+  BACKUP_LAST_FILE: 'remote_backup_last_file',
+  BACKUP_LAST_ERROR: 'remote_backup_last_error',
 } as const;
 
 export type EditableSettingKey = typeof SettingKeys[keyof typeof SettingKeys];
 
 export const EDITABLE_SETTING_KEYS: readonly EditableSettingKey[] = Object.freeze(
-  Object.values(SettingKeys),
+  Object.values(SettingKeys).filter((key) => key !== SettingKeys.BACKUP_PASSWORD),
 );
 
 const editableSettingKeySet = new Set<string>(EDITABLE_SETTING_KEYS);
@@ -86,6 +98,16 @@ export function validateEditableSettingValue(key: EditableSettingKey, value: unk
       parseAlertBehaviorSettings({ alert_priority_cap_pause_duration_minutes: text });
     } else if (key === SettingKeys.ALERT_PRIORITY_CAP_PAUSE_COOLDOWN_MIN) {
       parseAlertBehaviorSettings({ alert_priority_cap_pause_cooldown_minutes: text });
+    } else if (key === SettingKeys.BACKUP_ENABLED) {
+      if (text !== 'true' && text !== 'false') throw new Error();
+    } else if (key === SettingKeys.BACKUP_PORT) {
+      const n = Number(text); if (!Number.isInteger(n) || n < 1 || n > 65535) throw new Error();
+    } else if (key === SettingKeys.BACKUP_RETENTION) {
+      const n = Number(text); if (!Number.isInteger(n) || n < 1 || n > 10000) throw new Error();
+    } else if (key === SettingKeys.BACKUP_TIME) {
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(text)) throw new Error();
+    } else if (key === SettingKeys.BACKUP_HOST || key === SettingKeys.BACKUP_USERNAME || key === SettingKeys.BACKUP_PATH) {
+      if (!text.trim() || text.length > 512 || /[\r\n]/.test(text)) throw new Error();
     }
   } catch {
     throw new InvalidEditableSettingValueError();
