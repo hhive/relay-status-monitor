@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
-import { backupFileName, parseSftpModifiedAt, postgresCommandEnvironment, selectBackupDeletions, SUB2API_EXCLUDED_TABLE_DATA, validateBackupConfig, runRemoteBackup } from '../src/lib/remote-backup';
+import { gunzipSync } from 'node:zlib';
+import { BACKUP_FILE_PATTERN, backupFileName, dumpDatabase, parseSftpModifiedAt, postgresCommandEnvironment, selectBackupDeletions, SUB2API_EXCLUDED_TABLE_DATA, validateBackupConfig, runRemoteBackup } from '../src/lib/remote-backup';
 
 test('backup config validates safe path, time, port and retention', () => {
   const config = validateBackupConfig({ host: '10.0.0.2', username: 'backup', password: 'secret', path: '/srv/monitor', time: '03:15', port: 2222, retention: 3, enabled: true });
@@ -14,18 +18,20 @@ test('backup config validates safe path, time, port and retention', () => {
   }
 });
 
-test('backup names are fixed prefix and dump suffix', () => {
-  assert.match(backupFileName(new Date('2026-08-15T01:02:03.000Z')), /^relay-monitor-sub2api-20260815010203-[-a-f0-9]{8}\.tar\.gz$/);
+test('backup names are fixed prefix and sql gzip suffix', () => {
+  assert.match(backupFileName(new Date('2026-08-15T01:02:03.000Z')), BACKUP_FILE_PATTERN);
 });
 
 test('retention deletion only removes oldest matching monitor files', () => {
   const files = [
-    { name: 'relay-monitor-sub2api-a.tar.gz', modifiedAt: new Date('2026-01-01') },
-    { name: 'relay-monitor-sub2api-b.tar.gz', modifiedAt: new Date('2026-01-02') },
-    { name: 'relay-monitor-sub2api-c.tar.gz', modifiedAt: new Date('2026-01-03') },
+    { name: 'relay-monitor-sub2api-20260101000000-aaaaaaaa.sql.gz', modifiedAt: new Date('2026-01-01') },
+    { name: 'relay-monitor-sub2api-20260102000000-bbbbbbbb.sql.gz', modifiedAt: new Date('2026-01-02') },
+    { name: 'relay-monitor-sub2api-20260103000000-cccccccc.sql.gz', modifiedAt: new Date('2026-01-03') },
+    { name: 'relay-monitor-sub2api-manual.sql.gz', modifiedAt: new Date('2025-01-01') },
+    { name: 'relay-monitor-sub2api-legacy.tar.gz', modifiedAt: new Date('2025-01-01') },
     { name: 'other.dump', modifiedAt: new Date('2025-01-01') },
   ];
-  assert.deepEqual(selectBackupDeletions(files, 2), ['relay-monitor-sub2api-a.tar.gz']);
+  assert.deepEqual(selectBackupDeletions(files, 2), ['relay-monitor-sub2api-20260101000000-aaaaaaaa.sql.gz']);
 });
 
 test('Sub2API dump scope follows the reference policy and keeps credentials out of argv', () => {
@@ -33,6 +39,67 @@ test('Sub2API dump scope follows the reference policy and keeps credentials out 
   const env = postgresCommandEnvironment('postgresql://backup:p%40ss@127.0.0.1:5432/sub2api?sslmode=disable');
   assert.equal(env.PGDATABASE, 'sub2api'); assert.equal(env.PGPASSWORD, 'p@ss'); assert.equal(env.PGSSLMODE, 'disable');
   assert.equal(env.SUB2API_BACKUP_DATABASE_URL, undefined);
+});
+
+test('Sub2API backup is one restorable plain SQL gzip matching the Python reference contents', () => {
+  const source = readFileSync(new URL('../src/lib/remote-backup.ts', import.meta.url), 'utf8');
+  assert.match(source, /--format=plain/);
+  assert.match(source, /COPY public\.usage_logs \(/);
+  assert.match(source, /created_at >= now\(\) - interval '3 days'/);
+  assert.match(source, /TO STDOUT/);
+  assert.match(source, /pg_export_snapshot/);
+  assert.match(source, /--snapshot=\$\{snapshot\.id\}/);
+  assert.match(source, /--exclude-table-data-and-children=public\.\$\{table\}/);
+  assert.match(source, /attgenerated = ''/);
+  assert.doesNotMatch(source, /SELECT \* FROM public\.usage_logs/);
+  assert.match(source, /gzip/);
+  for (const forbidden of ['usage_logs_last_3_days.csv', 'manifest.txt', "command('tar'", "command('pg_restore'", '--format=custom']) {
+    assert.doesNotMatch(source, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});
+
+test('dump generator writes one snapshot-consistent restorable SQL gzip', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'remote-backup-test-'));
+  const bin = join(dir, 'bin');
+  const output = join(dir, 'backup.sql.gz');
+  const previousPath = process.env.PATH;
+  const previousUrl = process.env.SUB2API_BACKUP_DATABASE_URL;
+  try {
+    const { mkdir } = await import('node:fs/promises'); await mkdir(bin);
+    await writeFile(join(bin, 'pg_dump'), `#!/usr/bin/env node
+const fs = require('node:fs'); const args = process.argv.slice(2);
+const fileIndex = args.indexOf('--file');
+if (fileIndex < 0 || !args.some((arg) => arg === '--snapshot=00000003-00000001-1')) process.exit(2);
+if (args.filter((arg) => arg.startsWith('--exclude-table-data-and-children=public.')).length !== 5) process.exit(3);
+fs.writeFileSync(args[fileIndex + 1], '-- main dump\\nCREATE TABLE public.usage_logs (id bigint, request_id text, created_at timestamptz);\\n');
+`);
+    await writeFile(join(bin, 'psql'), `#!/usr/bin/env node
+const args = process.argv.slice(2); const commandIndex = args.indexOf('--command');
+if (commandIndex < 0) {
+  process.stdout.write('00000003-00000001-1\\n'); process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (value) => { if (value.includes('\\\\q')) process.exit(0); });
+} else {
+  const command = args[commandIndex + 1];
+  if (!command.includes("SET TRANSACTION SNAPSHOT '00000003-00000001-1'")) process.exit(4);
+  if (command.includes('string_agg')) process.stdout.write('id, request_id, created_at\\n');
+  else if (command.includes('COPY (SELECT')) process.stdout.write('1\\treq\\\\value\\t2026-08-15 00:00:00+00\\n2\\t\\\\N\\t2026-08-15 01:00:00+00\\n');
+  else process.exit(5);
+}
+`);
+    await Promise.all([chmod(join(bin, 'pg_dump'), 0o700), chmod(join(bin, 'psql'), 0o700)]);
+    process.env.PATH = `${bin}:${previousPath ?? ''}`;
+    process.env.SUB2API_BACKUP_DATABASE_URL = 'postgresql://backup:secret@127.0.0.1:5432/sub2api';
+    await dumpDatabase(output);
+    const sql = gunzipSync(await readFile(output)).toString('utf8');
+    assert.ok(sql.indexOf('-- main dump') < sql.indexOf('COPY public.usage_logs (id, request_id, created_at) FROM stdin;'));
+    assert.match(sql, /1\treq\\value\t2026-08-15 00:00:00\+00/);
+    assert.match(sql, /2\t\\N\t2026-08-15 01:00:00\+00/);
+    assert.match(sql, /\\\.\n$/);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    if (previousUrl === undefined) delete process.env.SUB2API_BACKUP_DATABASE_URL; else process.env.SUB2API_BACKUP_DATABASE_URL = previousUrl;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('SFTP timestamps sort cross-year files correctly', () => {
@@ -45,7 +112,7 @@ test('backup removes local temporary state after successful upload and cleanup',
   const calls: string[] = [];
   const result = await runRemoteBackup(
     validateBackupConfig({ host: 'host', username: 'user', password: 'secret', path: '/srv', retention: 1 }),
-    { upload: async (local, remote) => { calls.push(`upload:${local}:${remote}`); }, list: async () => [{ name: 'relay-monitor-sub2api-old.tar.gz', modifiedAt: new Date(0) }, { name: 'relay-monitor-sub2api-new.tar.gz', modifiedAt: new Date() }], remove: async (remote) => { calls.push(`remove:${remote}`); } },
+    { upload: async (local, remote) => { calls.push(`upload:${local}:${remote}`); }, list: async () => [{ name: 'relay-monitor-sub2api-20260101000000-aaaaaaaa.sql.gz', modifiedAt: new Date(0) }, { name: 'relay-monitor-sub2api-20260102000000-bbbbbbbb.sql.gz', modifiedAt: new Date() }], remove: async (remote) => { calls.push(`remove:${remote}`); } },
     async (path) => { const { writeFile } = await import('node:fs/promises'); await writeFile(path, 'dump'); }, async () => {}, false,
   );
   assert.equal(result.deleted.length, 1);

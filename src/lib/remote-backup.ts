@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdtemp, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -20,8 +20,9 @@ export type BackupTransport = {
 };
 
 export const BACKUP_PREFIX = 'relay-monitor-';
+export const BACKUP_FILE_PATTERN = /^relay-monitor-sub2api-\d{14}-[0-9a-f]{8}\.sql\.gz$/;
 export function backupFileName(now = new Date()): string {
-  return `${BACKUP_PREFIX}sub2api-${now.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}.tar.gz`;
+  return `${BACKUP_PREFIX}sub2api-${now.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}.sql.gz`;
 }
 
 export function validateBackupConfig(input: Partial<RemoteBackupConfig>): RemoteBackupConfig {
@@ -41,7 +42,7 @@ export function validateBackupConfig(input: Partial<RemoteBackupConfig>): Remote
 }
 
 export function selectBackupDeletions(files: Array<{ name: string; modifiedAt: Date }>, retention: number): string[] {
-  const matching = files.filter((f) => f.name.startsWith(`${BACKUP_PREFIX}sub2api-`) && f.name.endsWith('.tar.gz'));
+  const matching = files.filter((f) => BACKUP_FILE_PATTERN.test(f.name));
   return matching
     .sort((a, b) => a.modifiedAt.getTime() - b.modifiedAt.getTime())
     .slice(0, Math.max(0, matching.length - retention))
@@ -84,6 +85,51 @@ function command(commandName: string, args: string[], env?: NodeJS.ProcessEnv): 
   return new Promise((resolve, reject) => { const child = spawn(commandName, args, { env, stdio: ['ignore', 'pipe', 'pipe'] }); const out: Buffer[] = []; const err: Buffer[] = [];
     child.stdout.on('data', (d) => out.push(Buffer.from(d))); child.stderr.on('data', (d) => err.push(Buffer.from(d)));
     child.on('error', reject); child.on('close', (code) => code === 0 ? resolve(Buffer.concat(out)) : reject(new Error(`命令失败(${code}): ${Buffer.concat(err).toString('utf8').slice(0, 200)}`))); });
+}
+
+async function commandToFile(commandName: string, args: string[], path: string, append: boolean, env?: NodeJS.ProcessEnv): Promise<void> {
+  const target = await open(path, append ? 'a' : 'w', 0o600);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(commandName, args, { env, stdio: ['ignore', target.fd, 'pipe'] }); const err: Buffer[] = [];
+      child.stderr!.on('data', (d) => err.push(Buffer.from(d))); child.on('error', reject);
+      child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`命令失败(${code}): ${Buffer.concat(err).toString('utf8').slice(0, 200)}`)));
+    });
+  } finally {
+    await target.close();
+  }
+}
+
+type ExportedSnapshot = { id: string; close(): Promise<void> };
+
+function openExportedSnapshot(env: NodeJS.ProcessEnv): Promise<ExportedSnapshot> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('psql', ['--no-psqlrc', '--set=ON_ERROR_STOP=1', '--quiet', '--tuples-only', '--no-align'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const err: Buffer[] = []; let output = ''; let ready = false;
+    const timeout = setTimeout(() => { if (!ready) { child.kill(); reject(new Error('创建数据库一致性快照超时')); } }, 30_000);
+    const exited = new Promise<{ code: number | null; error?: Error }>((done) => {
+      child.on('error', (error) => done({ code: null, error })); child.on('close', (code) => done({ code }));
+    });
+    child.stderr.on('data', (data) => err.push(Buffer.from(data)));
+    child.stdout.on('data', (data) => {
+      output += Buffer.from(data).toString('utf8');
+      const id = output.split(/\r?\n/).map((line) => line.trim()).find((line) => /^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i.test(line));
+      if (!id || ready) return;
+      ready = true; clearTimeout(timeout);
+      resolve({ id, async close() {
+        if (child.exitCode === null && !child.killed) child.stdin.end('ROLLBACK;\n\\q\n');
+        const result = await exited;
+        if (result.error) throw result.error;
+        if (result.code !== 0) throw new Error(`关闭数据库一致性快照失败(${result.code}): ${Buffer.concat(err).toString('utf8').slice(0, 200)}`);
+      } });
+    });
+    void exited.then((result) => {
+      if (ready) return;
+      clearTimeout(timeout);
+      reject(result.error ?? new Error(`创建数据库一致性快照失败(${result.code}): ${Buffer.concat(err).toString('utf8').slice(0, 200)}`));
+    });
+    child.stdin.write("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;\nSELECT pg_export_snapshot();\n");
+  });
 }
 
 export const defaultTransport: BackupTransport = {
@@ -143,22 +189,29 @@ export function postgresCommandEnvironment(rawUrl: string): NodeJS.ProcessEnv {
   return env;
 }
 
-async function dumpDatabase(path: string): Promise<void> {
+export async function dumpDatabase(path: string): Promise<void> {
   const url = process.env.SUB2API_BACKUP_DATABASE_URL ?? process.env.SUB2API_DATABASE_URL;
   if (!url) throw new Error('SUB2API_BACKUP_DATABASE_URL 未配置');
   const env = postgresCommandEnvironment(url);
   const workDir = await mkdtemp(join(tmpdir(), 'sub2api-pg-dump-'));
-  const dumpPath = join(workDir, 'sub2api.dump');
-  const usagePath = join(workDir, 'usage_logs_last_3_days.csv');
-  const manifestPath = join(workDir, 'manifest.txt');
+  const sqlPath = join(workDir, 'sub2api.sql');
   try {
-    await command('pg_dump', ['--format=custom', '--no-owner', '--no-acl', '--clean', '--if-exists', '--file', dumpPath, ...SUB2API_EXCLUDED_TABLE_DATA.map((table) => `--exclude-table-data=${table}`)], env);
-    await command('pg_restore', ['--list', dumpPath]);
-    const usage = await command('psql', ['--no-psqlrc', '--set=ON_ERROR_STOP=1', '--command', "COPY (SELECT * FROM usage_logs WHERE created_at >= now() - interval '3 days') TO STDOUT WITH (FORMAT csv, HEADER true)"], env);
-    await writeFile(usagePath, usage, { mode: 0o600 });
-    await writeFile(manifestPath, 'target=sub2api\nformat=pg_dump-custom+usage-csv\nusage_logs_window=3 days\n', { mode: 0o600 });
-    await command('tar', ['-czf', path, '-C', workDir, 'sub2api.dump', 'usage_logs_last_3_days.csv', 'manifest.txt']);
-    await command('tar', ['-tzf', path]);
+    const snapshot = await openExportedSnapshot(env);
+    try {
+      await command('pg_dump', ['--format=plain', '--no-owner', '--no-acl', '--clean', '--if-exists', `--snapshot=${snapshot.id}`, '--file', sqlPath, ...SUB2API_EXCLUDED_TABLE_DATA.map((table) => `--exclude-table-data-and-children=public.${table}`)], env);
+      await chmod(sqlPath, 0o600);
+      const snapshotPrefix = `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; SET TRANSACTION SNAPSHOT '${snapshot.id}';`;
+      const columns = (await command('psql', ['--no-psqlrc', '--set=ON_ERROR_STOP=1', '--quiet', '--tuples-only', '--no-align', '--command', `${snapshotPrefix} SELECT string_agg(format('%I', attname), ', ' ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'public.usage_logs'::regclass AND attnum > 0 AND NOT attisdropped AND attgenerated = ''; COMMIT;`], env)).toString('utf8').trim();
+      if (!columns || /[\r\n;]/.test(columns)) throw new Error('usage_logs 列清单无效');
+      await appendFile(sqlPath, `\nCOPY public.usage_logs (${columns}) FROM stdin;\n`, { mode: 0o600 });
+      await commandToFile('psql', ['--no-psqlrc', '--set=ON_ERROR_STOP=1', '--quiet', '--command', `${snapshotPrefix} COPY (SELECT ${columns} FROM public.usage_logs WHERE created_at >= now() - interval '3 days') TO STDOUT; COMMIT;`], sqlPath, true, env);
+    } finally {
+      await snapshot.close();
+    }
+    await appendFile(sqlPath, '\\.\n', { mode: 0o600 });
+    await commandToFile('gzip', ['-c', sqlPath], path, false);
+    await chmod(path, 0o600);
+    await command('gzip', ['-t', path]);
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

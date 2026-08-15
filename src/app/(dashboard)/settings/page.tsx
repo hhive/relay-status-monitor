@@ -1082,7 +1082,7 @@ function RemoteBackupCard({
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4" />远程数据库备份</CardTitle>
-        <CardDescription>通过 SFTP 将 Sub2API PostgreSQL 每日备份上传到指定服务器。时间按 UTC 执行。</CardDescription>
+        <CardDescription>通过 SFTP 上传 Sub2API PostgreSQL `.sql.gz` 每日备份；可用 `gzip -dc | psql` 一次恢复。时间按 UTC 执行。</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex items-center justify-between rounded-md border px-3 py-2">
