@@ -87,7 +87,7 @@ test('cron secret is environment-only in API, collector, settings form, and docu
 });
 
 test('settings API exposes and accepts only the exact editable allowlist', () => {
-  const expectedKeys = Object.values(SettingKeys).sort();
+  const expectedKeys = Object.values(SettingKeys).filter((key) => key !== SettingKeys.BACKUP_PASSWORD).sort();
   assert.deepEqual([...EDITABLE_SETTING_KEYS].sort(), expectedKeys);
   for (const key of expectedKeys) {
     assert.equal(isEditableSettingKey(key), true, key);
@@ -98,6 +98,7 @@ test('settings API exposes and accepts only the exact editable allowlist', () =>
     'cron-secret',
     'Cron_Secret',
     'cron_secret_configured',
+    SettingKeys.BACKUP_PASSWORD,
     'unknown_setting',
   ]) {
     assert.equal(isEditableSettingKey(key), false, key);
