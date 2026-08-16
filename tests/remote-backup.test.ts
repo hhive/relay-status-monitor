@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { gunzipSync } from 'node:zlib';
-import { BACKUP_FILE_PATTERN, backupFileName, dumpDatabase, parseSftpModifiedAt, postgresCommandEnvironment, selectBackupDeletions, SUB2API_EXCLUDED_TABLE_DATA, validateBackupConfig, runRemoteBackup } from '../src/lib/remote-backup';
+import { BACKUP_FILE_PATTERN, backupFileName, dumpDatabase, parseSftpModifiedAt, postgresCommandEnvironment, selectBackupDeletions, SUB2API_EXCLUDED_TABLE_DATA, SUB2API_RECENT_THREE_DAY_TABLES, validateBackupConfig, runRemoteBackup } from '../src/lib/remote-backup';
 
 test('backup config validates safe path, time, port and retention', () => {
   const config = validateBackupConfig({ host: '10.0.0.2', username: 'backup', password: 'secret', path: '/srv/monitor', time: '03:15', port: 2222, retention: 3, enabled: true });
@@ -35,16 +35,18 @@ test('retention deletion only removes oldest matching monitor files', () => {
 });
 
 test('Sub2API dump scope follows the reference policy and keeps credentials out of argv', () => {
-  assert.deepEqual(SUB2API_EXCLUDED_TABLE_DATA, ['ops_error_logs', 'ops_system_logs', 'image_playground_tasks', 'ops_alert_events', 'usage_logs']);
+  assert.deepEqual(SUB2API_RECENT_THREE_DAY_TABLES, ['usage_logs', 'standalone_image_playground_tasks', 'media_playground_video_tasks']);
+  assert.deepEqual(SUB2API_EXCLUDED_TABLE_DATA, ['ops_error_logs', 'ops_system_logs', 'image_playground_tasks', 'ops_alert_events', ...SUB2API_RECENT_THREE_DAY_TABLES]);
   const env = postgresCommandEnvironment('postgresql://backup:p%40ss@127.0.0.1:5432/sub2api?sslmode=disable');
   assert.equal(env.PGDATABASE, 'sub2api'); assert.equal(env.PGPASSWORD, 'p@ss'); assert.equal(env.PGSSLMODE, 'disable');
   assert.equal(env.SUB2API_BACKUP_DATABASE_URL, undefined);
 });
 
-test('Sub2API backup is one restorable plain SQL gzip matching the Python reference contents', () => {
+test('Sub2API backup is one restorable plain SQL gzip with three-day usage and media tasks', () => {
   const source = readFileSync(new URL('../src/lib/remote-backup.ts', import.meta.url), 'utf8');
   assert.match(source, /--format=plain/);
-  assert.match(source, /COPY public\.usage_logs \(/);
+  assert.match(source, /SUB2API_RECENT_THREE_DAY_TABLES/);
+  assert.match(source, /COPY public\.\$\{table\} \(/);
   assert.match(source, /created_at >= now\(\) - interval '3 days'/);
   assert.match(source, /TO STDOUT/);
   assert.match(source, /pg_export_snapshot/);
@@ -70,8 +72,8 @@ test('dump generator writes one snapshot-consistent restorable SQL gzip', async 
 const fs = require('node:fs'); const args = process.argv.slice(2);
 const fileIndex = args.indexOf('--file');
 if (fileIndex < 0 || !args.some((arg) => arg === '--snapshot=00000003-00000001-1')) process.exit(2);
-if (args.filter((arg) => arg.startsWith('--exclude-table-data-and-children=public.')).length !== 5) process.exit(3);
-fs.writeFileSync(args[fileIndex + 1], '-- main dump\\nCREATE TABLE public.usage_logs (id bigint, request_id text, created_at timestamptz);\\n');
+if (args.filter((arg) => arg.startsWith('--exclude-table-data-and-children=public.')).length !== 7) process.exit(3);
+fs.writeFileSync(args[fileIndex + 1], '-- main dump\\nCREATE TABLE public.usage_logs (id bigint, request_id text, created_at timestamptz);\\nCREATE TABLE public.standalone_image_playground_tasks (id text, prompt text, created_at timestamptz);\\nCREATE TABLE public.media_playground_video_tasks (id text, prompt text, created_at timestamptz);\\n');
 `);
     await writeFile(join(bin, 'psql'), `#!/usr/bin/env node
 const args = process.argv.slice(2); const commandIndex = args.indexOf('--command');
@@ -81,8 +83,17 @@ if (commandIndex < 0) {
 } else {
   const command = args[commandIndex + 1];
   if (!command.includes("SET TRANSACTION SNAPSHOT '00000003-00000001-1'")) process.exit(4);
-  if (command.includes('string_agg')) process.stdout.write('id, request_id, created_at\\n');
-  else if (command.includes('COPY (SELECT')) process.stdout.write('1\\treq\\\\value\\t2026-08-15 00:00:00+00\\n2\\t\\\\N\\t2026-08-15 01:00:00+00\\n');
+  if (command.includes('string_agg')) {
+    if (command.includes("'public.usage_logs'::regclass")) process.stdout.write('id, request_id, created_at\\n');
+    else if (command.includes("'public.standalone_image_playground_tasks'::regclass") || command.includes("'public.media_playground_video_tasks'::regclass")) process.stdout.write('id, prompt, created_at\\n');
+    else process.exit(5);
+  } else if (command.includes('COPY (SELECT')) {
+    if (!command.includes("created_at >= now() - interval '3 days'")) process.exit(7);
+    if (command.includes('FROM public.usage_logs')) process.stdout.write('1\\treq\\\\value\\t2026-08-15 00:00:00+00\\n2\\t\\\\N\\t2026-08-15 01:00:00+00\\n');
+    else if (command.includes('FROM public.standalone_image_playground_tasks')) process.stdout.write('image-1\\timage prompt\\t2026-08-15 02:00:00+00\\n');
+    else if (command.includes('FROM public.media_playground_video_tasks')) process.stdout.write('video-1\\tvideo prompt\\t2026-08-15 03:00:00+00\\n');
+    else process.exit(6);
+  }
   else process.exit(5);
 }
 `);
@@ -94,6 +105,9 @@ if (commandIndex < 0) {
     assert.ok(sql.indexOf('-- main dump') < sql.indexOf('COPY public.usage_logs (id, request_id, created_at) FROM stdin;'));
     assert.match(sql, /1\treq\\value\t2026-08-15 00:00:00\+00/);
     assert.match(sql, /2\t\\N\t2026-08-15 01:00:00\+00/);
+    assert.match(sql, /COPY public\.standalone_image_playground_tasks \(id, prompt, created_at\) FROM stdin;\nimage-1\timage prompt/);
+    assert.match(sql, /COPY public\.media_playground_video_tasks \(id, prompt, created_at\) FROM stdin;\nvideo-1\tvideo prompt/);
+    assert.equal((sql.match(/COPY public\./g) ?? []).length, 3);
     assert.match(sql, /\\\.\n$/);
   } finally {
     if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;

@@ -175,7 +175,8 @@ export async function runRemoteBackup(config: RemoteBackupConfig, transport: Bac
   finally { if (dir) await rm(dir, { recursive: true, force: true }); backupInProgress = false; }
 }
 
-export const SUB2API_EXCLUDED_TABLE_DATA = ['ops_error_logs', 'ops_system_logs', 'image_playground_tasks', 'ops_alert_events', 'usage_logs'] as const;
+export const SUB2API_RECENT_THREE_DAY_TABLES = ['usage_logs', 'standalone_image_playground_tasks', 'media_playground_video_tasks'] as const;
+export const SUB2API_EXCLUDED_TABLE_DATA = ['ops_error_logs', 'ops_system_logs', 'image_playground_tasks', 'ops_alert_events', ...SUB2API_RECENT_THREE_DAY_TABLES] as const;
 
 export function postgresCommandEnvironment(rawUrl: string): NodeJS.ProcessEnv {
   const url = new URL(rawUrl);
@@ -201,14 +202,16 @@ export async function dumpDatabase(path: string): Promise<void> {
       await command('pg_dump', ['--format=plain', '--no-owner', '--no-acl', '--clean', '--if-exists', `--snapshot=${snapshot.id}`, '--file', sqlPath, ...SUB2API_EXCLUDED_TABLE_DATA.map((table) => `--exclude-table-data-and-children=public.${table}`)], env);
       await chmod(sqlPath, 0o600);
       const snapshotPrefix = `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; SET TRANSACTION SNAPSHOT '${snapshot.id}';`;
-      const columns = (await command('psql', ['--no-psqlrc', '--set=ON_ERROR_STOP=1', '--quiet', '--tuples-only', '--no-align', '--command', `${snapshotPrefix} SELECT string_agg(format('%I', attname), ', ' ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'public.usage_logs'::regclass AND attnum > 0 AND NOT attisdropped AND attgenerated = ''; COMMIT;`], env)).toString('utf8').trim();
-      if (!columns || /[\r\n;]/.test(columns)) throw new Error('usage_logs 列清单无效');
-      await appendFile(sqlPath, `\nCOPY public.usage_logs (${columns}) FROM stdin;\n`, { mode: 0o600 });
-      await commandToFile('psql', ['--no-psqlrc', '--set=ON_ERROR_STOP=1', '--quiet', '--command', `${snapshotPrefix} COPY (SELECT ${columns} FROM public.usage_logs WHERE created_at >= now() - interval '3 days') TO STDOUT; COMMIT;`], sqlPath, true, env);
+      for (const table of SUB2API_RECENT_THREE_DAY_TABLES) {
+        const columns = (await command('psql', ['--no-psqlrc', '--set=ON_ERROR_STOP=1', '--quiet', '--tuples-only', '--no-align', '--command', `${snapshotPrefix} SELECT string_agg(format('%I', attname), ', ' ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'public.${table}'::regclass AND attnum > 0 AND NOT attisdropped AND attgenerated = ''; COMMIT;`], env)).toString('utf8').trim();
+        if (!columns || /[\r\n;]/.test(columns)) throw new Error(`${table} 列清单无效`);
+        await appendFile(sqlPath, `\nCOPY public.${table} (${columns}) FROM stdin;\n`, { mode: 0o600 });
+        await commandToFile('psql', ['--no-psqlrc', '--set=ON_ERROR_STOP=1', '--quiet', '--command', `${snapshotPrefix} COPY (SELECT ${columns} FROM public.${table} WHERE created_at >= now() - interval '3 days') TO STDOUT; COMMIT;`], sqlPath, true, env);
+        await appendFile(sqlPath, '\\.\n', { mode: 0o600 });
+      }
     } finally {
       await snapshot.close();
     }
-    await appendFile(sqlPath, '\\.\n', { mode: 0o600 });
     await commandToFile('gzip', ['-c', sqlPath], path, false);
     await chmod(path, 0o600);
     await command('gzip', ['-t', path]);

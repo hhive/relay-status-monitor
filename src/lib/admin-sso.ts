@@ -2,8 +2,8 @@ export const ADMIN_APP_ID = 'upstream-monitor';
 export const ADMIN_EXCHANGE_PATH = '/api/v1/external-apps/upstream-monitor/exchange';
 export const ADMIN_EXCHANGE_TIMEOUT_MS = 10_000;
 
-const DEFAULT_ADMIN_SESSION_TTL_SECONDS = 3 * 24 * 60 * 60;
-const MAX_ADMIN_SESSION_TTL_SECONDS = 3 * 24 * 60 * 60;
+const DEFAULT_ADMIN_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const MAX_ADMIN_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const MIN_SECRET_BYTES = 32;
 const CLAIM_KEYS = [
   'app_id',

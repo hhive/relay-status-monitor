@@ -8,8 +8,8 @@ export const ADMIN_SESSION_COOKIE_NAME = 'rsm_admin_session';
 export const ADMIN_SESSION_ISSUER = 'relay-status-monitor';
 export const ADMIN_SESSION_AUDIENCE = 'upstream-monitor-admin';
 export const ADMIN_SESSION_PURPOSE = 'admin_sso';
-export const ADMIN_SESSION_DEFAULT_AGE = 3 * 24 * 60 * 60;
-export const ADMIN_SESSION_MAX_AGE = 3 * 24 * 60 * 60;
+export const ADMIN_SESSION_DEFAULT_AGE = 7 * 24 * 60 * 60;
+export const ADMIN_SESSION_MAX_AGE = 7 * 24 * 60 * 60;
 
 type SecretEnvironment = Readonly<Record<string, string | undefined>>;
 
