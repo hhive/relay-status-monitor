@@ -34,14 +34,14 @@ export function createSub2ApiPriorityClient(input: {
   secret?: string;
   fetchImpl?: typeof fetch;
 } = {}): Sub2ApiRelayMonitorClient {
-  const baseUrl = (input.baseUrl ?? process.env.SUB2API_PRIORITY_API_BASE_URL ?? '').replace(/\/+$/, '');
-  const secret = input.secret ?? process.env.SUB2API_RELAY_MONITOR_PRIORITY_SECRET ?? '';
+  const baseUrl = (input.baseUrl ?? process.env.SUB2API_ADMIN_EXCHANGE_BASE_URL ?? '').replace(/\/+$/, '');
+  const secret = input.secret ?? process.env.SUB2API_ADMIN_EXCHANGE_SECRET ?? '';
   const fetchImpl = input.fetchImpl ?? fetch;
   if (!/^https?:\/\//.test(baseUrl) || secret.trim().length < 32) throw new Sub2ApiPriorityError('priority_integration_unavailable');
   const request = async (sourceAccountId: string, suffix: string, init?: RequestInit): Promise<Record<string, unknown>> => {
     const response = await fetchImpl(`${baseUrl}${PRIORITY_PATH}/${accountId(sourceAccountId)}/${suffix}`, {
       ...init,
-      headers: { 'Content-Type': 'application/json', 'X-Sub2API-Relay-Monitor-Secret': secret },
+      headers: { 'Content-Type': 'application/json', 'X-Sub2API-External-App-Secret': secret },
       signal: AbortSignal.timeout(5_000),
     });
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;

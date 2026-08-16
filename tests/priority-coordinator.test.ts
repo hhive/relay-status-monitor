@@ -4,7 +4,7 @@ import test from 'node:test';
 import { createPriorityCoordinator, type PriorityAdjustmentRecord, type PriorityAdjustmentRepository, type PriorityChangeLogEntry } from '../src/lib/account-observability/priority-coordinator';
 import { createSub2ApiPriorityClient, Sub2ApiPriorityError, type Sub2ApiPriorityClient } from '../src/lib/account-observability/sub2api-priority-client';
 
-test('priority client sends the dedicated secret and returns conflict priority without response details', async () => {
+test('priority client sends the SSO secret and returns conflict priority without response details', async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const client = createSub2ApiPriorityClient({
     baseUrl: 'http://127.0.0.1:8080/', secret: '0123456789abcdef0123456789abcdef',
@@ -16,10 +16,44 @@ test('priority client sends the dedicated secret and returns conflict priority w
   await assert.rejects(client.setPriority('7', 50, 5), (error: unknown) =>
     error instanceof Sub2ApiPriorityError && error.code === 'priority_conflict' && error.currentPriority === 55);
   assert.equal(requests[0].url, 'http://127.0.0.1:8080/api/v1/internal/relay-monitor/accounts/7/priority');
-  assert.equal((requests[0].init?.headers as Record<string, string>)['X-Sub2API-Relay-Monitor-Secret'], '0123456789abcdef0123456789abcdef');
+  assert.equal((requests[0].init?.headers as Record<string, string>)['X-Sub2API-External-App-Secret'], '0123456789abcdef0123456789abcdef');
   await assert.rejects(client.setPriority('7', 50, 1_000_001), (error: unknown) =>
     error instanceof Sub2ApiPriorityError && error.code === 'invalid_priority_response');
   assert.equal(requests.length, 1, 'an over-limit target must fail before the request');
+});
+
+test('priority client reuses the administrator SSO URL and secret from the environment', async (t) => {
+  const environment = {
+    SUB2API_ADMIN_EXCHANGE_BASE_URL: process.env.SUB2API_ADMIN_EXCHANGE_BASE_URL,
+    SUB2API_ADMIN_EXCHANGE_SECRET: process.env.SUB2API_ADMIN_EXCHANGE_SECRET,
+    SUB2API_PRIORITY_API_BASE_URL: process.env.SUB2API_PRIORITY_API_BASE_URL,
+    SUB2API_RELAY_MONITOR_PRIORITY_SECRET: process.env.SUB2API_RELAY_MONITOR_PRIORITY_SECRET,
+  };
+  t.after(() => {
+    for (const [key, value] of Object.entries(environment)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  process.env.SUB2API_ADMIN_EXCHANGE_BASE_URL = 'https://sso.sub2api.example.test/';
+  process.env.SUB2API_ADMIN_EXCHANGE_SECRET = 'sso-secret-0123456789abcdef0123456789';
+  process.env.SUB2API_PRIORITY_API_BASE_URL = 'https://deprecated.example.test';
+  process.env.SUB2API_RELAY_MONITOR_PRIORITY_SECRET = 'deprecated-secret-0123456789abcdef';
+
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const client = createSub2ApiPriorityClient({
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      return new Response(JSON.stringify({ priority: 5 }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch,
+  });
+
+  assert.equal(await client.getPriority('7'), 5);
+  assert.equal(requests[0].url, 'https://sso.sub2api.example.test/api/v1/internal/relay-monitor/accounts/7/priority');
+  assert.equal((requests[0].init?.headers as Record<string, string>)['X-Sub2API-External-App-Secret'], process.env.SUB2API_ADMIN_EXCHANGE_SECRET);
+  assert.equal((requests[0].init?.headers as Record<string, string>)['X-Sub2API-Relay-Monitor-Secret'], undefined);
 });
 
 test('priority client rejects an over-limit upstream response', async () => {
