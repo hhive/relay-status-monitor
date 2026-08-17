@@ -31,6 +31,7 @@ test("pins the supported Next.js dependency baseline", () => {
   assert.equal(packageJson.pnpm?.overrides?.sharp, "0.35.3");
   assert.equal(packageJson.pnpm?.overrides?.postcss, "8.5.26");
   assert.equal(packageJson.pnpm?.overrides?.nanoid, "3.3.18");
+  assert.equal(packageJson.pnpm?.overrides?.["deepmerge-ts"], "8.0.1");
 });
 
 test("provides Node test runner and typecheck scripts", () => {
