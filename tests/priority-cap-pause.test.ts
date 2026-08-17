@@ -104,3 +104,35 @@ test('priority cap pauser skips all reads and writes when pausing is disabled', 
     { enabled: false, durationMinutes: 1, cooldownMinutes: 5 },
   ), { status: 'skipped_disabled' });
 });
+
+test('priority cap pauser reports paused, failed, and safe-skip outcomes to its observer', async () => {
+  const observed: Array<{ accountId: number; status: string; errorCode?: string }> = [];
+  let outcome: 'paused' | 'failed' | 'skipped' = 'paused';
+  const pauser = createPriorityCapPauser({
+    checkEligibility: async () => outcome === 'skipped'
+      ? { safe: false, reason: 'last_account' }
+      : { safe: true, reason: 'eligible' },
+    pauseScheduling: async () => {
+      if (outcome === 'failed') throw new Error('secret=must-not-be-recorded');
+      return new Date('2026-08-09T00:03:00Z');
+    },
+    recordResult: async (account, result, errorCode) => {
+      observed.push({ accountId: account.id, status: result.status, ...(errorCode ? { errorCode } : {}) });
+    },
+  });
+  const account = { id: 1, sourceAccountId: '11' };
+  const policy = { enabled: true, durationMinutes: 3, cooldownMinutes: 5 };
+
+  await pauser.pauseIfSafe(account, policy);
+  outcome = 'failed';
+  await pauser.pauseIfSafe(account, policy);
+  outcome = 'skipped';
+  await pauser.pauseIfSafe(account, policy);
+
+  assert.deepEqual(observed, [
+    { accountId: 1, status: 'paused' },
+    { accountId: 1, status: 'failed', errorCode: 'priority_cap_pause_failed' },
+    { accountId: 1, status: 'skipped_last_account' },
+  ]);
+  assert.doesNotMatch(JSON.stringify(observed), /must-not-be-recorded/);
+});

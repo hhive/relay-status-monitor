@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createPriorityCoordinator, type PriorityAdjustmentRecord, type PriorityAdjustmentRepository, type PriorityChangeLogEntry } from '../src/lib/account-observability/priority-coordinator';
+import { createPriorityCoordinator, type PriorityAdjustmentRecord, type PriorityAdjustmentRepository, type PriorityChangeLogEntry, type PriorityCoordinatorInstrumentation } from '../src/lib/account-observability/priority-coordinator';
 import { createSub2ApiPriorityClient, Sub2ApiPriorityError, type Sub2ApiPriorityClient } from '../src/lib/account-observability/sub2api-priority-client';
 
 test('priority client sends the SSO secret and returns conflict priority without response details', async () => {
@@ -392,4 +392,109 @@ test('priority coordinator logs only successful writes with recalculated CAS val
   failWrite = true;
   await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10);
   assert.equal(logs.length, 2, 'a failed write must not be logged as a priority change');
+});
+
+test('priority coordinator audits every remote attempt and resolves per-account failures', async () => {
+  let stored: PriorityAdjustmentRecord | null = null;
+  let activeSignals = 1;
+  let remotePriority = 5;
+  let failWrite = false;
+  const actions: Parameters<PriorityCoordinatorInstrumentation['recordAction']>[0][] = [];
+  const failures: Array<{ sourceAccountId: string; errorCode: string }> = [];
+  const recoveries: string[] = [];
+  const repository: PriorityAdjustmentRepository = {
+    find: async () => stored,
+    save: async (record) => { stored = { ...record }; },
+    countActiveSignals: async () => activeSignals,
+    listUnsettled: async () => stored ? [stored] : [],
+  };
+  const instrumentation: PriorityCoordinatorInstrumentation = {
+    recordAction: async (entry) => { actions.push(entry); },
+    recordFailure: async (entry) => { failures.push(entry); },
+    recoverFailure: async (sourceAccountId) => { recoveries.push(sourceAccountId); },
+  };
+  const coordinator = createPriorityCoordinator(repository, {
+    getPriority: async () => remotePriority,
+    setPriority: async (_id, expected, target) => {
+      if (failWrite) throw new Sub2ApiPriorityError('priority_http_503');
+      assert.equal(expected, remotePriority);
+      remotePriority = target;
+      return target;
+    },
+  }, undefined, undefined, instrumentation);
+
+  assert.equal(await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10), 'applied');
+  assert.deepEqual(actions[0], {
+    accountId: 7, sourceAccountId: '9', actionType: 'PRIORITY_ADJUST', result: 'SUCCESS',
+    priorityBefore: 5, priorityAfter: 50, factor: 10, conflictRecomputed: false,
+  });
+
+  activeSignals = 2;
+  failWrite = true;
+  assert.equal(await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 20), 'pending_retry');
+  assert.equal(actions[1].actionType, 'PRIORITY_ADJUST');
+  assert.equal(actions[1].result, 'FAILURE');
+  assert.equal(actions[1].errorCode, 'priority_http_503');
+  assert.deepEqual(failures, [{ sourceAccountId: '9', errorCode: 'priority_http_503' }]);
+
+  failWrite = false;
+  assert.equal(await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 99), 'applied');
+  activeSignals = 1;
+  await coordinator.restore(7);
+  assert.equal(actions.at(-1)?.actionType, 'PRIORITY_RESTORE');
+  assert.equal(actions.at(-1)?.result, 'SUCCESS');
+  assert.ok(recoveries.filter((id) => id === '9').length >= 2);
+});
+
+test('priority audit failures never turn a completed remote write into retry debt', async () => {
+  let stored: PriorityAdjustmentRecord | null = null;
+  let remotePriority = 5;
+  const repository: PriorityAdjustmentRepository = {
+    find: async () => stored,
+    save: async (record) => { stored = { ...record }; },
+    countActiveSignals: async () => 1,
+    listUnsettled: async () => stored ? [stored] : [],
+  };
+  const coordinator = createPriorityCoordinator(repository, {
+    getPriority: async () => remotePriority,
+    setPriority: async (_id, _expected, target) => { remotePriority = target; return target; },
+  }, undefined, undefined, {
+    recordAction: () => { throw new Error('audit unavailable'); },
+    recordFailure: () => { throw new Error('alert unavailable'); },
+    recoverFailure: () => { throw new Error('alert unavailable'); },
+  });
+
+  assert.equal(await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10), 'applied');
+  assert.equal(remotePriority, 50);
+  assert.equal((stored as PriorityAdjustmentRecord | null)?.status, 'ACTIVE');
+});
+
+test('priority failure audit preserves a CAS conflict recomputation', async () => {
+  let stored: PriorityAdjustmentRecord | null = null;
+  let writes = 0;
+  const actions: Parameters<PriorityCoordinatorInstrumentation['recordAction']>[0][] = [];
+  const repository: PriorityAdjustmentRepository = {
+    find: async () => stored,
+    save: async (record) => { stored = { ...record }; },
+    countActiveSignals: async () => 1,
+    listUnsettled: async () => stored ? [stored] : [],
+  };
+  const coordinator = createPriorityCoordinator(repository, {
+    getPriority: async () => 5,
+    setPriority: async () => {
+      writes += 1;
+      if (writes === 1) throw new Sub2ApiPriorityError('priority_conflict', 7);
+      throw new Sub2ApiPriorityError('priority_http_503');
+    },
+  }, undefined, undefined, {
+    recordAction: (entry) => { actions.push(entry); },
+    recordFailure: () => undefined,
+    recoverFailure: () => undefined,
+  });
+
+  assert.equal(await coordinator.adjust({ id: 7, sourceAccountId: '9' }, 10), 'pending_retry');
+  assert.equal(actions[0].result, 'FAILURE');
+  assert.equal(actions[0].conflictRecomputed, true);
+  assert.equal(actions[0].priorityBefore, 7);
+  assert.equal(actions[0].priorityAfter, 70);
 });

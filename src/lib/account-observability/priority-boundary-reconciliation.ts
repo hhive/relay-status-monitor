@@ -49,3 +49,12 @@ export function reconcileBoundaryLayers(
   const originalLayers = candidates.reduce((sum, candidate) => sum + Math.max(0, candidate.adjustmentLevel), 0);
   return { factors: realFactors, allocations, removedLayers: Math.max(0, originalLayers - retainedLayers) };
 }
+
+export function shouldPersistBoundaryReconciliation(
+  status: string,
+  originalFactorCount: number,
+  result: BoundaryReconciliationResult,
+): boolean {
+  const boundaryChanged = result.factors.length !== originalFactorCount || result.removedLayers > 0;
+  return boundaryChanged || (result.factors.length === 0 && status !== 'RESTORED');
+}

@@ -11,6 +11,8 @@ import {
   queryUsageRows,
 } from './sub2api-readonly';
 import { syncSub2ApiAccounts } from './sync';
+import { recordOperationalFailure, recoverOperationalAlert } from '../operational-alerts';
+import { safeErrorMessage } from '../safe-error';
 
 export interface MetricWindow {
   start: Date;
@@ -214,9 +216,11 @@ export async function runAccountObservabilityCycle(now = new Date()): Promise<{ 
     await runUpstreamBalanceCollection(now, client);
     await refreshAccountMetricSnapshots(now);
     await evaluateAccountAlerts(now);
+    await recoverOperationalAlert('collection_failed', 'system');
     return { skipped: false, readCount: sync.readCount + metrics.readCount, ignoredCount: sync.ignoredCount + metrics.ignoredCount, writeCount: metrics.writeCount };
   } catch (error) {
     await evaluateAccountAlerts(now).catch(() => undefined);
+    await recordOperationalFailure('collection_failed', 'system', 'Sub2API 指标采集', safeErrorMessage(error, '采集任务执行失败'));
     throw error;
   }
 }

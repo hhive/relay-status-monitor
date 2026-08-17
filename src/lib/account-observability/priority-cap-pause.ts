@@ -5,6 +5,7 @@ import {
   type ReadonlyClient,
 } from './sub2api-readonly';
 import { loadAlertBehaviorSettings } from './alert-signal-store';
+import { recordAccountSchedulingAction, recordOperationalFailure, recoverOperationalAlert } from '../operational-alerts';
 
 export const PRIORITY_CAP_ELIGIBILITY_SQL = `
   WITH target AS (
@@ -100,6 +101,11 @@ export interface PriorityCapPausePolicy {
 export function createPriorityCapPauser(input: {
   checkEligibility: (sourceAccountId: string, cooldownMinutes: number) => Promise<PriorityCapEligibility>;
   pauseScheduling: (sourceAccountId: string, durationMinutes: number) => Promise<Date>;
+  recordResult?: (
+    account: { id: number; sourceAccountId: string },
+    result: PriorityCapPauseResult,
+    errorCode?: string,
+  ) => Promise<void> | void;
 }) {
   let tail = Promise.resolve();
   const serialized = async <T>(operation: () => Promise<T>): Promise<T> => {
@@ -112,16 +118,51 @@ export function createPriorityCapPauser(input: {
       account: { id: number; sourceAccountId: string },
       policy: PriorityCapPausePolicy,
     ): Promise<PriorityCapPauseResult> => serialized(async () => {
+      let result: PriorityCapPauseResult;
+      let errorCode: string | undefined;
       try {
-        if (!policy.enabled) return { status: 'skipped_disabled' };
-        const eligibility = await input.checkEligibility(account.sourceAccountId, policy.cooldownMinutes);
-        if (!eligibility.safe) return { status: `skipped_${eligibility.reason}` } as PriorityCapPauseResult;
-        return { status: 'paused', until: await input.pauseScheduling(account.sourceAccountId, policy.durationMinutes) };
+        if (!policy.enabled) result = { status: 'skipped_disabled' };
+        else {
+          const eligibility = await input.checkEligibility(account.sourceAccountId, policy.cooldownMinutes);
+          result = !eligibility.safe
+            ? { status: `skipped_${eligibility.reason}` } as PriorityCapPauseResult
+            : { status: 'paused', until: await input.pauseScheduling(account.sourceAccountId, policy.durationMinutes) };
+        }
       } catch {
-        return { status: 'failed' };
+        result = { status: 'failed' };
+        errorCode = 'priority_cap_pause_failed';
       }
+      try { await input.recordResult?.(account, result, errorCode); } catch { /* Audit failures do not change scheduling. */ }
+      return result;
     }),
   };
+}
+
+async function recordProductionPauseResult(
+  account: { id: number; sourceAccountId: string },
+  result: PriorityCapPauseResult,
+  errorCode?: string,
+): Promise<void> {
+  const actionResult = result.status === 'paused' ? 'SUCCESS' : result.status === 'failed' ? 'FAILURE' : 'SAFE_SKIP';
+  const reasonCode = result.status.startsWith('skipped_') ? result.status.slice('skipped_'.length) : null;
+  await recordAccountSchedulingAction({
+    accountId: account.id,
+    sourceAccountId: account.sourceAccountId,
+    accountName: `Sub2API #${account.sourceAccountId}`,
+    actionType: 'PRIORITY_CAP_PAUSE',
+    result: actionResult,
+    pausedUntil: result.until,
+    reasonCode,
+    errorCode,
+  });
+  if (result.status === 'failed') {
+    await recordOperationalFailure(
+      'priority_cap_pause_failed', account.sourceAccountId,
+      `Sub2API #${account.sourceAccountId}`, errorCode ?? 'priority_cap_pause_failed',
+    );
+  } else {
+    await recoverOperationalAlert('priority_cap_pause_failed', account.sourceAccountId);
+  }
 }
 
 let productionPauser: ReturnType<typeof createPriorityCapPauser> | null = null;
@@ -151,6 +192,7 @@ export async function pausePriorityCappedAccount(account: { id: number; sourceAc
   } catch {
     // The structured failed result below keeps configuration errors observable.
   }
+  await recordProductionPauseResult(account, result, result.status === 'failed' ? 'priority_cap_pause_failed' : undefined);
   console.info(JSON.stringify({
     event: 'relay_monitor_priority_cap_pause',
     accountId: account.id,

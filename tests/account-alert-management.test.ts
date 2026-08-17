@@ -132,7 +132,7 @@ test('account alert routes and pages use the new account-only endpoints', () => 
   const eventList = source('src/app/api/account-alert-events/route.ts');
   const eventItem = source('src/app/api/account-alert-events/[id]/route.ts');
   const settings = source('src/app/(dashboard)/settings/page.tsx');
-  const incidents = source('src/app/(dashboard)/incidents/page.tsx');
+  const incidents = source('src/components/alert-records/alert-records-view.tsx');
 
   assert.match(ruleList, /requireApiSession/);
   assert.match(ruleList, /ACCOUNT_ALERT_RULE_STORAGE_METRICS/);
@@ -176,7 +176,7 @@ test('every alert event resolves to its owning rule configuration', async () => 
 });
 
 test('event and rule pages expose configuration actions and async navigation targets', () => {
-  const incidents = source('src/app/(dashboard)/incidents/page.tsx');
+  const incidents = source('src/components/alert-records/alert-records-view.tsx');
   const settings = source('src/app/(dashboard)/settings/page.tsx');
   const detail = source('src/app/(dashboard)/accounts/[id]/page.tsx');
 

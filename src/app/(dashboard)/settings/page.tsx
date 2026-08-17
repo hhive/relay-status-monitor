@@ -72,6 +72,15 @@ interface AlertChannel {
   enabled: boolean;
 }
 
+interface OperationalAlertRule {
+  id: number;
+  key: string;
+  name: string;
+  description: string;
+  severity: string;
+  enabled: boolean;
+}
+
 interface GroupAlertSetting {
   groupId: number;
   name: string;
@@ -290,6 +299,8 @@ function RulesTab() {
 
       <AlertBehaviorCard />
 
+      <OperationalRulesCard />
+
       {rules.length === 0 ? (
         <Card className="flex h-32 items-center justify-center text-muted-foreground">
           暂无告警规则
@@ -400,6 +411,79 @@ function RulesTab() {
         ))
       )}
     </div>
+  );
+}
+
+function OperationalRulesCard() {
+  const [rules, setRules] = useState<OperationalAlertRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await apiFetch('/api/operational-alert-rules');
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || '加载系统运维规则失败');
+      setRules(Array.isArray(body) ? body : Array.isArray(body.items) ? body.items : []);
+    } catch (error) {
+      setRules([]);
+      toast.error(error instanceof Error ? error.message : '加载系统运维规则失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function updateRule(rule: OperationalAlertRule, update: { enabled?: boolean; severity?: string }) {
+    setUpdatingId(rule.id);
+    try {
+      const response = await apiFetch(`/api/operational-alert-rules/${rule.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(update),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || '更新系统运维规则失败');
+      const updated = body.rule ?? body;
+      setRules((current) => current.map((item) => item.id === rule.id ? { ...item, ...updated } : item));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '更新系统运维规则失败');
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">系统运维规则</CardTitle>
+        <CardDescription>采集、优先级调整、暂停账号和远程备份失败均会保存记录。只有 CRITICAL 级别的触发与恢复会发送飞书。</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <div className="flex h-24 items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />加载中…</div>
+        ) : rules.length === 0 ? (
+          <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">暂无系统运维规则</div>
+        ) : rules.map((rule) => (
+          <div key={rule.id} className={cn('flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center', updatingId === rule.id && 'opacity-70')}>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2"><SeverityBadge severity={rule.severity} /><span className="font-medium">{rule.name}</span></div>
+              <p className="mt-1 break-words text-xs text-muted-foreground">{rule.description}</p>
+            </div>
+            <div className="flex items-center justify-between gap-3 sm:justify-end">
+              <Select value={rule.severity} disabled={updatingId === rule.id} onValueChange={(severity) => void updateRule(rule, { severity })}>
+                <SelectTrigger className="w-32" aria-label={`${rule.name}严重级别`}><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="INFO">INFO</SelectItem><SelectItem value="WARNING">WARNING</SelectItem><SelectItem value="CRITICAL">CRITICAL</SelectItem></SelectContent>
+              </Select>
+              <Label htmlFor={`operational-rule-${rule.id}`} className="sr-only">{rule.name}</Label>
+              <Switch id={`operational-rule-${rule.id}`} checked={rule.enabled} disabled={updatingId === rule.id} onCheckedChange={() => void updateRule(rule, { enabled: !rule.enabled })} />
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 

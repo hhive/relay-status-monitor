@@ -6,7 +6,8 @@ import { spawn } from 'node:child_process';
 import { decrypt, encrypt } from './crypto';
 import { getSetting, setSetting, SettingKeys } from './settings';
 import { prisma } from './db';
-import { sendAccountNotification } from './alerts/channels/feishu';
+import { recordOperationalFailure, recoverOperationalAlert } from './operational-alerts';
+import { safeErrorMessage } from './safe-error';
 
 export type RemoteBackupConfig = {
   enabled: boolean; host: string; port: number; username: string; password: string;
@@ -18,6 +19,21 @@ export type BackupTransport = {
   list(remoteDir: string, config: RemoteBackupConfig): Promise<Array<{ name: string; modifiedAt: Date }>>;
   remove(remotePath: string, config: RemoteBackupConfig): Promise<void>;
 };
+
+export interface BackupOperationalAlertReporter {
+  failure(detail: string): Promise<void> | void;
+  recovery(): Promise<void> | void;
+}
+
+const productionBackupAlertReporter: BackupOperationalAlertReporter = {
+  failure: (detail) => recordOperationalFailure('remote_backup_failed', 'system', 'Sub2API 远程备份', detail),
+  recovery: () => recoverOperationalAlert('remote_backup_failed', 'system'),
+};
+
+async function observeBackupAlert(operation: (() => Promise<void> | void) | undefined): Promise<void> {
+  if (!operation) return;
+  try { await operation(); } catch { /* Alert persistence must not alter backup state. */ }
+}
 
 export const BACKUP_PREFIX = 'relay-monitor-';
 export const BACKUP_FILE_PATTERN = /^relay-monitor-sub2api-\d{14}-[0-9a-f]{8}\.sql\.gz$/;
@@ -157,8 +173,9 @@ let backupInProgress = false;
 
 export async function runRemoteBackup(config: RemoteBackupConfig, transport: BackupTransport = defaultTransport, dump = dumpDatabase, recordStatus: (status: 'success' | 'failed', error?: string, fileName?: string) => Promise<void> = async (status, error = '', fileName) => {
   await setSetting(SettingKeys.BACKUP_LAST_STATUS, status); await setSetting(SettingKeys.BACKUP_LAST_AT, new Date().toISOString()); await setSetting(SettingKeys.BACKUP_LAST_ERROR, error); if (fileName) await setSetting(SettingKeys.BACKUP_LAST_FILE, fileName);
-}, persistRecord = true): Promise<{ fileName: string; deleted: string[] }> {
+}, persistRecord = true, alertReporter?: BackupOperationalAlertReporter): Promise<{ fileName: string; deleted: string[] }> {
   if (backupInProgress) throw new Error('备份任务正在执行');
+  const reporter = alertReporter ?? (persistRecord ? productionBackupAlertReporter : null);
   backupInProgress = true;
   let record: { id: number } | null = null;
   let dir = '';
@@ -170,8 +187,9 @@ export async function runRemoteBackup(config: RemoteBackupConfig, transport: Bac
     const files = await transport.list(config.path, config); const deleted = selectBackupDeletions(files, config.retention); for (const name of deleted) await transport.remove(`${config.path.replace(/\/$/, '')}/${name}`, config);
     await recordStatus('success', '', fileName);
     if (record) await prisma.remoteBackupRecord.update({ where: { id: record.id }, data: { status: 'SUCCEEDED', finishedAt: new Date(), fileName, fileSize: size, deletedCount: deleted.length, deletedFiles: deleted } });
+    await observeBackupAlert(reporter ? () => reporter.recovery() : undefined);
     return { fileName, deleted };
-  } catch (error) { const message = error instanceof Error ? error.message.slice(0, 500) : '备份失败'; await recordStatus('failed', message); if (record) { await prisma.remoteBackupRecord.update({ where: { id: record.id }, data: { status: 'FAILED', finishedAt: new Date(), errorMessage: message } }); await notifyRepeatedBackupFailure(message); } throw error; }
+  } catch (error) { const message = safeErrorMessage(error, '备份失败'); await observeBackupAlert(reporter ? () => reporter.failure(message) : undefined); await recordStatus('failed', message); if (record) await prisma.remoteBackupRecord.update({ where: { id: record.id }, data: { status: 'FAILED', finishedAt: new Date(), errorMessage: message } }); throw error; }
   finally { if (dir) await rm(dir, { recursive: true, force: true }); backupInProgress = false; }
 }
 
@@ -227,12 +245,6 @@ export async function getBackupRecords(options: { limit?: number; offset?: numbe
   const where = options.status && ['RUNNING', 'SUCCEEDED', 'FAILED'].includes(options.status) ? { status: options.status } : undefined;
   const [rows, total] = await Promise.all([prisma.remoteBackupRecord.findMany({ where, orderBy: { startedAt: 'desc' }, take: limit, skip: offset }), prisma.remoteBackupRecord.count({ where })]);
   return { items: rows.map((row) => ({ ...row, fileSize: row.fileSize === null ? null : Number(row.fileSize) })), total, limit, offset };
-}
-
-async function notifyRepeatedBackupFailure(message: string): Promise<void> {
-  const latest = await prisma.remoteBackupRecord.findMany({ orderBy: { startedAt: 'desc' }, take: 3, select: { status: true } });
-  if (latest.length < 2 || latest[0].status !== 'FAILED' || latest[1].status !== 'FAILED' || latest[2]?.status === 'FAILED') return;
-  await sendAccountNotification({ id: 0, metric: 'sub2api_backup_failed', severity: 'CRITICAL', message: `Sub2API 远程备份已连续失败 2 次：${message}` }, { name: 'Sub2API 数据备份', sourceAccountId: '-', platform: 'postgresql' }).catch(() => undefined);
 }
 
 export async function isBackupDue(config: RemoteBackupConfig, now = new Date()): Promise<boolean> {

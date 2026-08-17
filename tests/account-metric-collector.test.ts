@@ -139,3 +139,10 @@ test('production collection refreshes after metric writes and before alerts', ()
   const source = readFileSync(new URL('../src/lib/account-observability/collector.ts', import.meta.url), 'utf8');
   assert.match(source, /await metricRunner\(completeMetricWindow\(now\)\);[\s\S]*await refreshAccountMetricSnapshots\(now\);[\s\S]*await evaluateAccountAlerts\(now\);/);
 });
+
+test('collection cycle records one system failure and resolves it after a complete success', () => {
+  const source = readFileSync(new URL('../src/lib/account-observability/collector.ts', import.meta.url), 'utf8');
+  assert.match(source, /recoverOperationalAlert\('collection_failed', 'system'\)/);
+  assert.match(source, /recordOperationalFailure\('collection_failed', 'system', 'Sub2API 指标采集'/);
+  assert.ok(source.indexOf("recoverOperationalAlert('collection_failed'") > source.indexOf('evaluateAccountAlerts(now)'));
+});

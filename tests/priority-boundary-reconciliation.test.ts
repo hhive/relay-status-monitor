@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { reconcileBoundaryLayers } from '../src/lib/account-observability/priority-boundary-reconciliation';
+import {
+  reconcileBoundaryLayers,
+  shouldPersistBoundaryReconciliation,
+} from '../src/lib/account-observability/priority-boundary-reconciliation';
 
 test('boundary reconciliation removes no-op factors and keeps at most one layer per active rule first', () => {
   const result = reconcileBoundaryLayers(
@@ -26,4 +29,12 @@ test('boundary reconciliation never invents layers when no real factor remains',
   assert.deepEqual(result.factors, []);
   assert.deepEqual([...result.allocations.entries()], []);
   assert.equal(result.removedLayers, 3);
+});
+
+test('empty failed records are persisted so their status becomes restored', () => {
+  const unchangedEmpty = reconcileBoundaryLayers([], []);
+
+  assert.equal(shouldPersistBoundaryReconciliation('FAILED_ADJUST', 0, unchangedEmpty), true);
+  assert.equal(shouldPersistBoundaryReconciliation('FAILED_RESTORE', 0, unchangedEmpty), true);
+  assert.equal(shouldPersistBoundaryReconciliation('RESTORED', 0, unchangedEmpty), false);
 });

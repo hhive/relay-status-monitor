@@ -2,6 +2,7 @@ import { prisma } from '../db';
 import { calculateAdjustedPriority, calculateRestoredPriority } from './alert-behavior';
 import { createSub2ApiPriorityClient, Sub2ApiPriorityError, type Sub2ApiPriorityClient } from './sub2api-priority-client';
 import { pausePriorityCappedAccount } from './priority-cap-pause';
+import { recordAccountSchedulingAction, recordOperationalFailure, recoverOperationalAlert } from '../operational-alerts';
 
 export interface PriorityAdjustmentRecord {
   accountId: number;
@@ -40,8 +41,39 @@ export type PrioritySyncResult = 'applied' | 'capped' | 'disabled' | 'pending_re
 export type PriorityChangeLogger = (entry: PriorityChangeLogEntry) => void;
 export type PriorityCapHandler = (account: { id: number; sourceAccountId: string }) => Promise<unknown>;
 
+export interface PrioritySchedulingAction {
+  accountId: number;
+  sourceAccountId: string;
+  actionType: 'PRIORITY_ADJUST' | 'PRIORITY_RESTORE';
+  result: 'SUCCESS' | 'FAILURE';
+  priorityBefore: number | null;
+  priorityAfter: number | null;
+  factor: number;
+  conflictRecomputed: boolean;
+  errorCode?: string;
+}
+
+export interface PriorityCoordinatorInstrumentation {
+  recordAction(entry: PrioritySchedulingAction): Promise<void> | void;
+  recordFailure(entry: { sourceAccountId: string; errorCode: string }): Promise<void> | void;
+  recoverFailure(sourceAccountId: string): Promise<void> | void;
+}
+
+const noopInstrumentation: PriorityCoordinatorInstrumentation = {
+  recordAction: () => undefined,
+  recordFailure: () => undefined,
+  recoverFailure: () => undefined,
+};
+
+class PriorityAttemptError extends Error {
+  constructor(readonly original: unknown, readonly conflictRecomputed: boolean) {
+    super('priority_attempt_failed');
+  }
+}
+
 function errorCode(error: unknown): string {
-  return error instanceof Sub2ApiPriorityError ? error.code : 'priority_request_failed';
+  const source = error instanceof PriorityAttemptError ? error.original : error;
+  return source instanceof Sub2ApiPriorityError ? source.code : 'priority_request_failed';
 }
 
 function emptyRecord(account: { id: number; sourceAccountId: string }, factor: number): PriorityAdjustmentRecord {
@@ -65,9 +97,14 @@ export function createPriorityCoordinator(
   client: Sub2ApiPriorityClient,
   logPriorityChange: PriorityChangeLogger = () => undefined,
   onPriorityCapped: PriorityCapHandler = async () => undefined,
+  instrumentation: PriorityCoordinatorInstrumentation = noopInstrumentation,
 ) {
   const logSuccessfulChange = (entry: PriorityChangeLogEntry): void => {
     try { logPriorityChange(entry); } catch { /* Logging must not invalidate a completed remote write. */ }
+  };
+
+  const observe = async (operation: () => Promise<void> | void): Promise<void> => {
+    try { await operation(); } catch { /* Observability must not alter scheduling state. */ }
   };
 
   const settleSkippedAdjustment = async (
@@ -143,7 +180,11 @@ export function createPriorityCoordinator(
       }
       record = { ...record, expectedPriority: error.currentPriority, basePriority: recalculated.basePriority, adjustedPriority: recalculated.adjustedPriority };
       await repository.save(record);
-      await client.setPriority(record.sourceAccountId, record.expectedPriority!, record.adjustedPriority!);
+      try {
+        await client.setPriority(record.sourceAccountId, record.expectedPriority!, record.adjustedPriority!);
+      } catch (retryError) {
+        throw new PriorityAttemptError(retryError, true);
+      }
     }
     logSuccessfulChange({
       event: 'relay_monitor_priority_changed', accountId: record.accountId,
@@ -151,6 +192,16 @@ export function createPriorityCoordinator(
       previousPriority: record.expectedPriority!, targetPriority: record.adjustedPriority!,
       factor, conflictRecalculated,
     });
+    await observe(() => instrumentation.recordAction({
+      accountId: record.accountId,
+      sourceAccountId: record.sourceAccountId,
+      actionType: 'PRIORITY_ADJUST',
+      result: 'SUCCESS',
+      priorityBefore: record.expectedPriority!,
+      priorityAfter: record.adjustedPriority!,
+      factor,
+      conflictRecomputed: conflictRecalculated,
+    }));
     record = {
       ...record,
       appliedFactors: [...record.appliedFactors, factor],
@@ -224,7 +275,11 @@ export function createPriorityCoordinator(
         restoreTargetPriority: calculateRestoredPriority(error.currentPriority, factor),
       };
       await repository.save(record);
-      await client.setPriority(record.sourceAccountId, record.restoreExpectedPriority!, record.restoreTargetPriority!);
+      try {
+        await client.setPriority(record.sourceAccountId, record.restoreExpectedPriority!, record.restoreTargetPriority!);
+      } catch (retryError) {
+        throw new PriorityAttemptError(retryError, true);
+      }
     }
     logSuccessfulChange({
       event: 'relay_monitor_priority_changed', accountId: record.accountId,
@@ -232,6 +287,16 @@ export function createPriorityCoordinator(
       previousPriority: record.restoreExpectedPriority!, targetPriority: record.restoreTargetPriority!,
       factor, conflictRecalculated,
     });
+    await observe(() => instrumentation.recordAction({
+      accountId: record.accountId,
+      sourceAccountId: record.sourceAccountId,
+      actionType: 'PRIORITY_RESTORE',
+      result: 'SUCCESS',
+      priorityBefore: record.restoreExpectedPriority!,
+      priorityAfter: record.restoreTargetPriority!,
+      factor,
+      conflictRecomputed: conflictRecalculated,
+    }));
     const appliedFactors = record.appliedFactors.slice(0, -1);
     record = {
       ...record,
@@ -260,7 +325,10 @@ export function createPriorityCoordinator(
         const applied = await applyAdjustment(record, record.factor);
         record = applied.record;
         result = applied.result;
-        if (result === 'capped' || result === 'disabled') return result;
+        if (result === 'capped' || result === 'disabled') {
+          await observe(() => instrumentation.recoverFailure(account.sourceAccountId));
+          return result;
+        }
       } else if (['RESTORING', 'FAILED_RESTORE'].includes(record.status) && record.restoreExpectedPriority != null) {
         record = await applyRestore(record);
       }
@@ -268,18 +336,35 @@ export function createPriorityCoordinator(
         const applied = await applyAdjustment(record, factor);
         record = applied.record;
         result = applied.result;
-        if (result === 'capped' || result === 'disabled') return result;
+        if (result === 'capped' || result === 'disabled') {
+          await observe(() => instrumentation.recoverFailure(account.sourceAccountId));
+          return result;
+        }
       }
       while (record.appliedFactors.length > desiredLevel) record = await applyRestore(record);
+      await observe(() => instrumentation.recoverFailure(account.sourceAccountId));
       return result;
     } catch (error) {
       const persisted = await repository.find(account.id) ?? record;
       const restoring = ['RESTORING', 'FAILED_RESTORE'].includes(persisted.status);
+      const code = errorCode(error);
       await repository.save({
         ...persisted,
         status: restoring ? 'FAILED_RESTORE' : 'FAILED_ADJUST',
-        lastError: errorCode(error),
+        lastError: code,
       });
+      await observe(() => instrumentation.recordAction({
+        accountId: persisted.accountId,
+        sourceAccountId: persisted.sourceAccountId,
+        actionType: restoring ? 'PRIORITY_RESTORE' : 'PRIORITY_ADJUST',
+        result: 'FAILURE',
+        priorityBefore: restoring ? persisted.restoreExpectedPriority : persisted.expectedPriority,
+        priorityAfter: restoring ? persisted.restoreTargetPriority : persisted.adjustedPriority,
+        factor: persisted.factor,
+        conflictRecomputed: error instanceof PriorityAttemptError && error.conflictRecomputed,
+        errorCode: code,
+      }));
+      await observe(() => instrumentation.recordFailure({ sourceAccountId: persisted.sourceAccountId, errorCode: code }));
       return 'pending_retry';
     }
   };
@@ -319,24 +404,93 @@ const repository: PriorityAdjustmentRepository = {
 };
 
 let productionCoordinator: ReturnType<typeof createPriorityCoordinator> | null = null;
+const productionInstrumentation: PriorityCoordinatorInstrumentation = {
+  recordAction: (entry) => recordAccountSchedulingAction({
+    accountId: entry.accountId,
+    sourceAccountId: entry.sourceAccountId,
+    accountName: `Sub2API #${entry.sourceAccountId}`,
+    actionType: entry.actionType,
+    result: entry.result,
+    priorityBefore: entry.priorityBefore,
+    priorityAfter: entry.priorityAfter,
+    factor: entry.factor,
+    conflictRecomputed: entry.conflictRecomputed,
+    errorCode: entry.errorCode,
+  }),
+  recordFailure: ({ sourceAccountId, errorCode }) => recordOperationalFailure(
+    'priority_adjustment_failed', sourceAccountId, `Sub2API #${sourceAccountId}`, errorCode,
+  ),
+  recoverFailure: (sourceAccountId) => recoverOperationalAlert('priority_adjustment_failed', sourceAccountId),
+};
 function coordinator() {
   productionCoordinator ??= createPriorityCoordinator(
     repository,
     createSub2ApiPriorityClient(),
     (entry) => { console.info(JSON.stringify(entry)); },
     pausePriorityCappedAccount,
+    productionInstrumentation,
   );
   return productionCoordinator;
 }
 
 export async function ensurePriorityAdjusted(account: { id: number; sourceAccountId: string }, factor: number) {
-  try { return await coordinator().adjust(account, factor); } catch { return 'pending_retry' as const; }
+  try { return await coordinator().adjust(account, factor); } catch (error) {
+    const code = errorCode(error);
+    await productionInstrumentation.recordAction({
+      accountId: account.id,
+      sourceAccountId: account.sourceAccountId,
+      actionType: 'PRIORITY_ADJUST',
+      result: 'FAILURE',
+      priorityBefore: null,
+      priorityAfter: null,
+      factor,
+      conflictRecomputed: false,
+      errorCode: code,
+    });
+    await productionInstrumentation.recordFailure({ sourceAccountId: account.sourceAccountId, errorCode: code });
+    return 'pending_retry' as const;
+  }
 }
 
 export async function ensurePriorityRestored(accountId: number) {
-  try { await coordinator().restore(accountId); } catch { /* Retried by the next evaluation cycle. */ }
+  try { await coordinator().restore(accountId); } catch (error) {
+    const record = await repository.find(accountId).catch(() => null);
+    if (!record) return;
+    const code = errorCode(error);
+    await productionInstrumentation.recordAction({
+      accountId: record.accountId,
+      sourceAccountId: record.sourceAccountId,
+      actionType: 'PRIORITY_RESTORE',
+      result: 'FAILURE',
+      priorityBefore: record.restoreExpectedPriority,
+      priorityAfter: record.restoreTargetPriority,
+      factor: record.factor,
+      conflictRecomputed: false,
+      errorCode: code,
+    });
+    await productionInstrumentation.recordFailure({ sourceAccountId: record.sourceAccountId, errorCode: code });
+  }
 }
 
 export async function retryPriorityAdjustments(accounts: ReadonlyMap<number, { id: number; sourceAccountId: string; priorityEligible?: boolean }>, factor: number) {
-  try { return await coordinator().retry(accounts, factor); } catch { return []; }
+  try { return await coordinator().retry(accounts, factor); } catch (error) {
+    const code = errorCode(error);
+    const unsettled = await repository.listUnsettled().catch(() => []);
+    for (const record of unsettled) {
+      const restoring = ['RESTORING', 'FAILED_RESTORE'].includes(record.status);
+      await productionInstrumentation.recordAction({
+        accountId: record.accountId,
+        sourceAccountId: record.sourceAccountId,
+        actionType: restoring ? 'PRIORITY_RESTORE' : 'PRIORITY_ADJUST',
+        result: 'FAILURE',
+        priorityBefore: restoring ? record.restoreExpectedPriority : record.expectedPriority,
+        priorityAfter: restoring ? record.restoreTargetPriority : record.adjustedPriority,
+        factor: record.factor,
+        conflictRecomputed: false,
+        errorCode: code,
+      });
+      await productionInstrumentation.recordFailure({ sourceAccountId: record.sourceAccountId, errorCode: code });
+    }
+    return [];
+  }
 }

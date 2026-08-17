@@ -1,6 +1,7 @@
 import { prisma } from '../src/lib/db';
 import {
   reconcileBoundaryLayers,
+  shouldPersistBoundaryReconciliation,
   type BoundaryCandidate,
 } from '../src/lib/account-observability/priority-boundary-reconciliation';
 
@@ -22,7 +23,7 @@ async function main(): Promise<void> {
   });
   const result = reconcileBoundaryLayers(adjustment.appliedFactors, candidates);
   const originalLayers = candidates.reduce((sum, candidate) => sum + Math.max(0, candidate.adjustmentLevel), 0);
-  if (result.factors.length === adjustment.appliedFactors.length && result.removedLayers === 0) continue;
+  if (!shouldPersistBoundaryReconciliation(adjustment.status, adjustment.appliedFactors.length, result)) continue;
   const retainedLayers = [...result.allocations.values()].reduce((sum, value) => sum + value, 0);
   if (retainedLayers !== result.factors.length) {
     throw new Error(`account ${adjustment.accountId} cannot align candidate layers with real factors`);

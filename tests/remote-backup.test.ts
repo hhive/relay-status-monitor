@@ -134,6 +134,30 @@ test('backup removes local temporary state after successful upload and cleanup',
   assert.deepEqual(calls.filter((call) => call.startsWith('remove:')).length, 1);
 });
 
+test('real backup execution triggers a redacted failure and recovers after success', async () => {
+  const alerts: Array<{ phase: 'failure' | 'recovery'; detail?: string }> = [];
+  let failUpload = true;
+  const config = validateBackupConfig({ host: 'host', username: 'user', password: 'secret', path: '/srv', retention: 1 });
+  const transport = {
+    upload: async () => { if (failUpload) throw new Error('password=hunter2 upload failed'); },
+    list: async () => [],
+    remove: async () => undefined,
+  };
+  const reporter = {
+    failure: async (detail: string) => { alerts.push({ phase: 'failure', detail }); },
+    recovery: async () => { alerts.push({ phase: 'recovery' }); },
+  };
+  const dump = async (path: string) => { const { writeFile } = await import('node:fs/promises'); await writeFile(path, 'dump'); };
+
+  await assert.rejects(runRemoteBackup(config, transport, dump, async () => {}, false, reporter));
+  failUpload = false;
+  await runRemoteBackup(config, transport, dump, async () => {}, false, reporter);
+
+  assert.deepEqual(alerts.map((alert) => alert.phase), ['failure', 'recovery']);
+  assert.doesNotMatch(alerts[0].detail ?? '', /hunter2/);
+  assert.match(alerts[0].detail ?? '', /\[REDACTED\]/);
+});
+
 test('disabled cron skips before loading an unconfigured backup target', () => {
   const route = readFileSync(new URL('../src/app/api/cron/backup/route.ts', import.meta.url), 'utf8');
   const enabledCheck = route.indexOf('SettingKeys.BACKUP_ENABLED');

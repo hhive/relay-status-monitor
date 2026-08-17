@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Activity, LayoutDashboard, Bell, Settings, LogOut, Menu, Sun, Moon, ChartNoAxesCombined } from 'lucide-react';
+import { Activity, LayoutDashboard, Bell, Settings, LogOut, Menu, Sun, Moon, ChartNoAxesCombined, ListRestart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/components/theme-provider';
 import { cn } from '@/lib/utils';
@@ -12,7 +12,8 @@ import { apiFetch, resetApiFetchCache } from '@/lib/api-fetch';
 const NAV_ITEMS = [
   { href: '/', label: '总览', icon: LayoutDashboard },
   { href: '/accounts', label: '账号', icon: ChartNoAxesCombined },
-  { href: '/incidents', label: '告警事件', icon: Bell },
+  { href: '/alert-records', label: '告警记录', icon: Bell },
+  { href: '/scheduling-records', label: '调整记录', icon: ListRestart },
   { href: '/settings', label: '设置', icon: Settings },
 ];
 

@@ -46,6 +46,18 @@ enum AccountBalanceMode {
   NEWAPI
 }
 
+enum AccountSchedulingActionType {
+  PRIORITY_ADJUST
+  PRIORITY_RESTORE
+  PRIORITY_CAP_PAUSE
+}
+
+enum AccountSchedulingActionResult {
+  SUCCESS
+  FAILURE
+  SAFE_SKIP
+}
+
 // ============ 核心表 ============
 
 /// Sub2API 账号只读投影
@@ -92,6 +104,7 @@ model Sub2ApiAccount {
   alertCandidates            AccountAlertCandidate[]
   priorityAdjustment         AccountPriorityAdjustment?
   balanceCredential           AccountBalanceCredential?
+  schedulingActionRecords     AccountSchedulingActionRecord[]
 
   @@index([syncState, remoteStatus])
   @@index([lastSyncedAt])
@@ -258,6 +271,64 @@ model AlertChannel {
   enabled   Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model OperationalAlertRule {
+  id          Int                     @id @default(autoincrement())
+  key         String                  @unique
+  name        String
+  description String                  @db.Text
+  severity    Severity                @default(CRITICAL)
+  enabled     Boolean                 @default(true)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  events      OperationalAlertEvent[]
+
+  @@index([enabled, key])
+}
+
+model OperationalAlertEvent {
+  id                     Int                  @id @default(autoincrement())
+  ruleId                 Int
+  rule                   OperationalAlertRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  subjectKey             String
+  subjectName            String
+  detail                 String               @db.Text
+  recoveryDetail         String?              @db.Text
+  severity               Severity             @default(CRITICAL)
+  firstTriggeredAt       DateTime             @default(now())
+  lastFailedAt           DateTime             @default(now())
+  failureCount           Int                  @default(1)
+  resolved               Boolean              @default(false)
+  resolvedAt             DateTime?
+  notificationDeliveries Json?
+
+  @@index([ruleId, subjectKey, resolved])
+  @@index([resolved, firstTriggeredAt])
+  @@index([severity, firstTriggeredAt])
+}
+
+model AccountSchedulingActionRecord {
+  id                 Int                           @id @default(autoincrement())
+  accountId          Int?
+  account            Sub2ApiAccount?               @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  sourceAccountId    String
+  accountName        String
+  actionType         AccountSchedulingActionType
+  result             AccountSchedulingActionResult
+  priorityBefore     Int?
+  priorityAfter      Int?
+  factor             Int?
+  conflictRecomputed Boolean                       @default(false)
+  pausedUntil        DateTime?
+  reasonCode         String?
+  errorCode          String?
+  occurredAt         DateTime                      @default(now())
+
+  @@index([accountId, occurredAt])
+  @@index([actionType, occurredAt])
+  @@index([result, occurredAt])
+  @@index([occurredAt])
 }
 
 model Setting {
