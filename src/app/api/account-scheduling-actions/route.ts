@@ -18,6 +18,7 @@ export async function GET(request: Request) {
         orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
         skip,
         take,
+        include: { account: { select: { name: true } } },
       }),
       prisma.accountSchedulingActionRecord.count({ where }),
     ]);

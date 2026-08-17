@@ -10,6 +10,7 @@ import {
   buildAccountSchedulingActionQuery,
   buildOperationalAlertEventQuery,
   parseOperationalAlertRuleUpdate,
+  toAccountSchedulingActionDto,
   toOperationalAlertEventDto,
 } from '../src/lib/operational-alert-management';
 import {
@@ -81,6 +82,28 @@ test('scheduling action query validates exact enums and account pagination', () 
       OperationalAlertValidationError,
     );
   }
+});
+
+test('scheduling action DTO prefers the current account name and falls back to its audit snapshot', () => {
+  const record = {
+    id: 7,
+    accountId: 3,
+    sourceAccountId: '19',
+    accountName: 'Sub2API #19',
+    actionType: 'PRIORITY_ADJUST' as const,
+    result: 'SUCCESS' as const,
+    priorityBefore: 10,
+    priorityAfter: 20,
+    factor: 2,
+    conflictRecomputed: false,
+    pausedUntil: null,
+    reasonCode: null,
+    errorCode: null,
+    occurredAt: new Date('2026-08-17T01:00:00Z'),
+  };
+
+  assert.equal(toAccountSchedulingActionDto({ ...record, account: { name: '生产 Claude 账号' } }).accountName, '生产 Claude 账号');
+  assert.equal(toAccountSchedulingActionDto({ ...record, account: null }).accountName, 'Sub2API #19');
 });
 
 function harness(input: {
@@ -257,6 +280,7 @@ test('schema, migration, APIs and notification channel expose the operational co
   assert.match(events, /orderBy:\s*\[\{ lastFailedAt: 'desc' \}/);
   assert.match(actions, /buildAccountSchedulingActionQuery/);
   assert.match(actions, /requireApiSession/);
+  assert.match(actions, /account:\s*\{\s*select:\s*\{\s*name:\s*true/);
 
   const feishu = source('src/lib/alerts/channels/feishu.ts');
   assert.match(feishu, /sendOperationalNotification/);

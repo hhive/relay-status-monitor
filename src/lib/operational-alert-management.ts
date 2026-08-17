@@ -183,6 +183,7 @@ interface AccountSchedulingActionDtoInput {
   reasonCode: string | null;
   errorCode: string | null;
   occurredAt: Date;
+  account?: { name: string } | null;
 }
 
 export function toAccountSchedulingActionDto<T extends AccountSchedulingActionDtoInput>(record: T) {
@@ -190,7 +191,7 @@ export function toAccountSchedulingActionDto<T extends AccountSchedulingActionDt
     id: record.id,
     accountId: record.accountId,
     sourceAccountId: record.sourceAccountId,
-    accountName: record.accountName,
+    accountName: record.account?.name ?? record.accountName,
     actionType: record.actionType,
     result: record.result,
     priorityBefore: record.priorityBefore,

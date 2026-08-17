@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
@@ -16,13 +15,11 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/page-header';
 import { apiFetch } from '@/lib/api-fetch';
 import { alertRuleConfigurationHref } from '@/lib/account-observability-ui';
 import { beginLatestRequest } from '@/lib/request-sequence';
 
-type RecordType = 'system' | 'account';
 type ResolvedFilter = 'open' | 'resolved' | 'all';
 
 interface PageResult<T> {
@@ -30,30 +27,24 @@ interface PageResult<T> {
   total: number;
 }
 
-interface OperationalAlertEvent {
+interface UnifiedAlertEvent {
   id: number;
+  type: 'operational' | 'account';
   subjectKey: string;
   subjectName: string;
   severity: string;
   detail: string | null;
+  recoveryDetail: string | null;
   resolved: boolean;
-  failureCount: number;
-  firstTriggeredAt: string;
-  lastFailedAt: string;
+  occurrenceCount: number;
+  occurredAt: string;
+  lastOccurredAt: string;
   resolvedAt: string | null;
   rule: { id: number; key: string; name: string };
-}
-
-interface AccountAlertEvent {
-  id: number;
-  metric: string;
-  severity: string;
-  message: string;
-  resolved: boolean;
-  createdAt: string;
-  resolvedAt: string | null;
-  account: { id: number; name: string; platform: string | null };
-  rule: { id: number; name: string };
+  account: { id: number; sourceAccountId: string; name: string; platform: string | null } | null;
+  metric: string | null;
+  metricValue: number | null;
+  canResolve: boolean;
 }
 
 interface AccountSchedulingAction {
@@ -80,38 +71,16 @@ const METRICS = [
 ] as const;
 
 export function AlertRecordsView() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const requestedType = searchParams.get('type');
-  const type: RecordType = requestedType === 'account' ? requestedType : 'system';
-
-  function changeType(next: string) {
-    router.replace(`/alert-records?type=${next}`, { scroll: false });
-  }
-
-  return (
-    <div className="space-y-6">
-      <PageHeader icon={History} title="告警记录" />
-      <Tabs value={type} onValueChange={changeType}>
-        <TabsList className="grid h-auto w-full grid-cols-2 sm:w-auto">
-          <TabsTrigger value="system">系统告警</TabsTrigger>
-          <TabsTrigger value="account">账号告警</TabsTrigger>
-        </TabsList>
-        <TabsContent value="system" className="mt-4"><SystemEvents /></TabsContent>
-        <TabsContent value="account" className="mt-4"><AccountEvents /></TabsContent>
-      </Tabs>
-    </div>
-  );
-}
-
-function SystemEvents() {
-  const [items, setItems] = useState<OperationalAlertEvent[]>([]);
+  const [items, setItems] = useState<UnifiedAlertEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<ResolvedFilter>('open');
+  const [type, setType] = useState('all');
   const [rule, setRule] = useState('all');
+  const [accountInput, setAccountInput] = useState('');
   const [severity, setSeverity] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [resolvingKey, setResolvingKey] = useState<string | null>(null);
   const requestSequence = useRef(0);
 
   const load = useCallback(async () => {
@@ -119,119 +88,124 @@ function SystemEvents() {
     setLoading(true);
     const query = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
     if (status !== 'all') query.set('status', status);
+    if (type !== 'all') query.set('type', type);
     if (rule !== 'all') query.set('rule', rule);
+    if (/^[1-9]\d*$/.test(accountInput)) query.set('account', accountInput);
     if (severity !== 'all') query.set('severity', severity);
     try {
-      const response = await apiFetch(`/api/operational-alert-events?${query}`);
+      const response = await apiFetch(`/api/alert-events?${query}`);
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || '获取系统告警失败');
-      const result = normalizePage<OperationalAlertEvent>(body);
+      if (!response.ok) throw new Error(body.error || '获取告警记录失败');
+      const result = normalizePage<UnifiedAlertEvent>(body);
       if (isCurrent()) { setItems(result.items); setTotal(result.total); }
     } catch {
       if (isCurrent()) { setItems([]); setTotal(0); }
     } finally {
       if (isCurrent()) setLoading(false);
     }
-  }, [page, rule, severity, status]);
+  }, [accountInput, page, rule, severity, status, type]);
 
   useEffect(() => { void load(); }, [load]);
   const updateFilter = (setter: (value: string) => void) => (value: string) => { setPage(1); setter(value); };
 
+  async function handleResolve(event: UnifiedAlertEvent) {
+    if (event.type !== 'account' || !event.canResolve) return;
+    const key = `${event.type}-${event.id}`;
+    setResolvingKey(key);
+    try {
+      const response = await apiFetch(`/api/account-alert-events/${event.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolved: true }),
+      });
+      if (response.ok) await load();
+    } finally {
+      setResolvingKey(null);
+    }
+  }
+
   return (
-    <section className="space-y-3">
-      <div className="grid gap-2 sm:grid-cols-3">
+    <div className="space-y-6">
+      <PageHeader icon={History} title="告警记录" />
+      <section className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <Select value={type} onValueChange={updateFilter(setType)}>
+          <SelectTrigger aria-label="按告警类型筛选"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem value="operational">运维告警</SelectItem><SelectItem value="account">账号告警</SelectItem></SelectContent>
+        </Select>
         <Select value={status} onValueChange={updateFilter((value) => setStatus(value as ResolvedFilter))}>
           <SelectTrigger aria-label="按恢复状态筛选"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="open">未恢复</SelectItem><SelectItem value="resolved">已恢复</SelectItem><SelectItem value="all">全部状态</SelectItem></SelectContent>
         </Select>
         <Select value={rule} onValueChange={updateFilter(setRule)}>
-          <SelectTrigger aria-label="按系统规则筛选"><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label="按规则或指标筛选"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">全部规则</SelectItem>
-            <SelectItem value="collection_failed">采集失败</SelectItem>
-            <SelectItem value="priority_adjustment_failed">优先级调整失败</SelectItem>
-            <SelectItem value="priority_cap_pause_failed">暂停账号失败</SelectItem>
-            <SelectItem value="remote_backup_failed">备份失败</SelectItem>
+            <SelectGroup>
+              <SelectItem value="all">全部规则与指标</SelectItem>
+              <SelectItem value="collection_failed">采集失败</SelectItem>
+              <SelectItem value="priority_adjustment_failed">优先级调整失败</SelectItem>
+              <SelectItem value="priority_cap_pause_failed">暂停账号失败</SelectItem>
+              <SelectItem value="remote_backup_failed">备份失败</SelectItem>
+              {METRICS.map((value) => <SelectItem key={value} value={value}>{metricLabel(value)}</SelectItem>)}
+            </SelectGroup>
           </SelectContent>
         </Select>
+        <Input inputMode="numeric" aria-label="按 Sub2API 账号 ID 筛选告警" placeholder="Sub2API 账号 ID" value={accountInput} onChange={(event) => { setPage(1); setAccountInput(event.target.value.replace(/\D/g, '')); }} />
         <SeverityFilter value={severity} onChange={updateFilter(setSeverity)} />
       </div>
-      <RecordState loading={loading} empty={items.length === 0} emptyText="暂无系统告警记录">
+      <RecordState loading={loading} empty={items.length === 0} emptyText={status === 'open' ? '当前没有未恢复告警' : '暂无告警记录'}>
         <div className="hidden overflow-x-auto rounded-md border sm:block">
-          <table className="w-full min-w-[860px] text-left text-sm">
-            <thead><tr className="border-b bg-muted/40"><Th>规则 / 主题</Th><Th>级别</Th><Th>触发时间</Th><Th>最近失败</Th><Th>失败次数</Th><Th>恢复时间</Th><Th>详情</Th></tr></thead>
-            <tbody>{items.map((event) => <tr key={event.id} className="border-b last:border-0">
+          <table className="w-full min-w-[1120px] text-left text-sm">
+            <thead><tr className="border-b bg-muted/40"><Th>告警类型</Th><Th>规则 / 主题</Th><Th>账号</Th><Th>级别</Th><Th>触发时间</Th><Th>最近发生</Th><Th>次数</Th><Th>恢复时间</Th><Th>详情 / 操作</Th></tr></thead>
+            <tbody>{items.map((event) => <tr key={`${event.type}-${event.id}`} className="border-b last:border-0">
+              <Td><Badge variant="outline">{alertTypeLabel(event.type)}</Badge></Td>
               <Td><div className="font-medium">{event.rule.name}</div><div className="text-xs text-muted-foreground">{event.subjectName}</div></Td>
-              <Td><SeverityBadge severity={event.severity} /></Td><Td>{formatTime(event.firstTriggeredAt)}</Td><Td>{formatTime(event.lastFailedAt)}</Td>
-              <Td>{event.failureCount}</Td><Td>{formatTime(event.resolvedAt)}</Td><Td className="max-w-xs break-words">{event.detail || '-'}</Td>
+              <Td><AlertAccount event={event} /></Td><Td><SeverityBadge severity={event.severity} /></Td><Td>{formatTime(event.occurredAt)}</Td><Td>{formatTime(event.lastOccurredAt)}</Td>
+              <Td>{event.occurrenceCount}</Td><Td>{formatTime(event.resolvedAt)}</Td><Td className="max-w-sm"><AlertDetail event={event} resolving={resolvingKey === `${event.type}-${event.id}`} onResolve={() => void handleResolve(event)} /></Td>
             </tr>)}</tbody>
           </table>
         </div>
-        <div className="space-y-2 sm:hidden">{items.map((event) => <Card key={event.id} className="space-y-3 p-4">
-          <div className="flex flex-wrap items-center gap-2"><SeverityBadge severity={event.severity} /><span className="font-medium">{event.rule.name}</span>{event.resolved && <ResolvedBadge />}</div>
-          <p className="text-sm">{event.subjectName}</p><p className="break-words text-sm text-muted-foreground">{event.detail || '-'}</p>
-          <dl className="grid grid-cols-2 gap-2 text-xs"><Fact label="触发" value={formatTime(event.firstTriggeredAt)} /><Fact label="最近失败" value={formatTime(event.lastFailedAt)} /><Fact label="失败次数" value={String(event.failureCount)} /><Fact label="恢复" value={formatTime(event.resolvedAt)} /></dl>
+        <div className="space-y-2 sm:hidden">{items.map((event) => <Card key={`${event.type}-${event.id}`} className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{alertTypeLabel(event.type)}</Badge><SeverityBadge severity={event.severity} /><span className="font-medium">{event.rule.name}</span>{event.resolved && <ResolvedBadge />}</div>
+          <p className="text-sm">{event.subjectName}</p><AlertAccount event={event} /><AlertDetail event={event} resolving={resolvingKey === `${event.type}-${event.id}`} onResolve={() => void handleResolve(event)} />
+          <dl className="grid grid-cols-2 gap-2 text-xs"><Fact label="触发" value={formatTime(event.occurredAt)} /><Fact label="最近发生" value={formatTime(event.lastOccurredAt)} /><Fact label="次数" value={String(event.occurrenceCount)} /><Fact label="恢复" value={formatTime(event.resolvedAt)} /></dl>
         </Card>)}</div>
       </RecordState>
       <Pagination page={page} total={total} onPage={setPage} />
-    </section>
+      </section>
+    </div>
   );
 }
 
-function AccountEvents() {
-  const [items, setItems] = useState<AccountAlertEvent[]>([]);
-  const [resolvedFilter, setResolvedFilter] = useState<ResolvedFilter>('open');
-  const [accountInput, setAccountInput] = useState('');
-  const [metric, setMetric] = useState('all');
-  const [severity, setSeverity] = useState('all');
-  const [loading, setLoading] = useState(true);
-  const [resolvingId, setResolvingId] = useState<number | null>(null);
-  const requestSequence = useRef(0);
-
-  const fetchEvents = useCallback(async () => {
-    const isCurrent = beginLatestRequest(requestSequence);
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (resolvedFilter !== 'all') params.set('resolved', String(resolvedFilter === 'resolved'));
-    if (/^[1-9]\d*$/.test(accountInput)) params.set('account', accountInput);
-    if (metric !== 'all') params.set('metric', metric);
-    if (severity !== 'all') params.set('severity', severity);
-    try {
-      const response = await apiFetch(`/api/account-alert-events?${params}`);
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || '获取账号告警失败');
-      if (isCurrent()) setItems(normalizePage<AccountAlertEvent>(body).items);
-    } catch {
-      if (isCurrent()) setItems([]);
-    } finally {
-      if (isCurrent()) setLoading(false);
-    }
-  }, [accountInput, metric, resolvedFilter, severity]);
-
-  useEffect(() => { void fetchEvents(); }, [fetchEvents]);
-
-  async function handleResolve(id: number) {
-    setResolvingId(id);
-    try {
-      const response = await apiFetch(`/api/account-alert-events/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolved: true }) });
-      if (response.ok) await fetchEvents();
-    } finally { setResolvingId(null); }
-  }
-
-  return <section className="space-y-3">
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-      <Select value={resolvedFilter} onValueChange={(value) => setResolvedFilter(value as ResolvedFilter)}><SelectTrigger aria-label="按恢复状态筛选"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="open">未解决</SelectItem><SelectItem value="resolved">已解决</SelectItem><SelectItem value="all">全部状态</SelectItem></SelectContent></Select>
-      <Input inputMode="numeric" aria-label="按账号 ID 筛选" placeholder="账号 ID" value={accountInput} onChange={(event) => setAccountInput(event.target.value.replace(/\D/g, ''))} />
-      <Select value={metric} onValueChange={setMetric}><SelectTrigger aria-label="按指标筛选"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部指标</SelectItem>{METRICS.map((value) => <SelectItem key={value} value={value}>{metricLabel(value)}</SelectItem>)}</SelectGroup></SelectContent></Select>
-      <SeverityFilter value={severity} onChange={setSeverity} />
+function AlertAccount({ event }: { event: UnifiedAlertEvent }) {
+  if (!event.account) return <span className="text-muted-foreground">-</span>;
+  return (
+    <div className="min-w-0">
+      <Link href={`/accounts/${event.account.id}`} className="block truncate font-medium hover:text-primary">{event.account.name}</Link>
+      <div className="text-xs text-muted-foreground">Sub2API ID: {event.account.sourceAccountId}</div>
     </div>
-    <RecordState loading={loading} empty={items.length === 0} emptyText={resolvedFilter === 'open' ? '没有未解决的账号告警' : '暂无账号告警记录'}>
-      <div className="space-y-2">{items.map((event) => <Card key={event.id} className="p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex flex-wrap items-center gap-2"><SeverityBadge severity={event.severity} /><Badge variant="outline">{metricLabel(event.metric)}</Badge><Link href={`/accounts/${event.account.id}`} className="truncate text-sm font-medium hover:text-primary">{event.account.name}</Link>{event.account.platform && <Badge variant="secondary">{event.account.platform}</Badge>}{event.resolved && <ResolvedBadge />}</div>
-        <p className="break-words text-sm">{event.message}</p><p className="text-xs text-muted-foreground">{formatTime(event.createdAt)}{event.resolvedAt ? ` · 恢复于 ${formatTime(event.resolvedAt)}` : ''}</p>
-      </div><div className="flex flex-wrap items-center gap-2"><Button asChild variant="outline" size="sm"><Link href={alertRuleConfigurationHref(event)}><SlidersHorizontal data-icon="inline-start" />配置规则</Link></Button>{!event.resolved && <Button variant="outline" size="sm" disabled={resolvingId === event.id} onClick={() => void handleResolve(event.id)}>{resolvingId === event.id ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Check data-icon="inline-start" />}标记已解决</Button>}</div></div></Card>)}</div>
-    </RecordState>
-  </section>;
+  );
+}
+
+function AlertDetail({ event, resolving, onResolve }: { event: UnifiedAlertEvent; resolving: boolean; onResolve: () => void }) {
+  const canConfigure = isConfigurableAccountAlert(event);
+  return (
+    <div className="space-y-2">
+      <p className="break-words text-sm">{event.detail || '-'}</p>
+      {(canConfigure || event.canResolve) && <div className="flex flex-wrap gap-2">
+        {canConfigure && <Button asChild variant="outline" size="sm"><Link href={alertRuleConfigurationHref(event)}><SlidersHorizontal data-icon="inline-start" />配置规则</Link></Button>}
+        {event.canResolve && <Button variant="outline" size="sm" disabled={resolving} onClick={onResolve}>{resolving ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Check data-icon="inline-start" />}标记已解决</Button>}
+      </div>}
+    </div>
+  );
+}
+
+function isConfigurableAccountAlert(event: UnifiedAlertEvent): event is UnifiedAlertEvent & {
+  type: 'account';
+  account: NonNullable<UnifiedAlertEvent['account']>;
+  metric: string;
+} {
+  return event.type === 'account' && event.account !== null && event.metric !== null;
 }
 
 export function SchedulingActions() {
@@ -306,7 +280,8 @@ function ResultBadge({ result }: { result: string }) {
 }
 function AccountLink({ item }: { item: AccountSchedulingAction }) {
   const name = item.accountName || `账号 ${item.sourceAccountId}`;
-  return item.accountId ? <Link href={`/accounts/${item.accountId}`} className="hover:text-primary">{name}</Link> : <>{name}</>;
+  const content = <div><div className="font-medium">{name}</div><div className="text-xs text-muted-foreground">Sub2API ID: {item.sourceAccountId}</div></div>;
+  return item.accountId ? <Link href={`/accounts/${item.accountId}`} className="block hover:text-primary">{content}</Link> : content;
 }
 function Fact({ label, value }: { label: string; value: string }) { return <div><dt className="text-muted-foreground">{label}</dt><dd className="mt-0.5 break-words">{value}</dd></div>; }
 function Th({ children }: { children: React.ReactNode }) { return <th className="whitespace-nowrap px-3 py-2 font-medium text-muted-foreground">{children}</th>; }
@@ -334,6 +309,10 @@ function actionChange(item: AccountSchedulingAction): string {
   if (item.pausedUntil) return `暂停至 ${formatTime(item.pausedUntil)}`;
   if (item.priorityBefore != null || item.priorityAfter != null) return `${item.priorityBefore ?? '-'} → ${item.priorityAfter ?? '-'}${item.factor == null ? '' : ` · 系数 ${item.factor}`}`;
   return '-';
+}
+
+function alertTypeLabel(type: UnifiedAlertEvent['type']): string {
+  return type === 'operational' ? '运维告警' : '账号告警';
 }
 
 function metricLabel(metric: string): string {
