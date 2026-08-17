@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  boundaryFactorsForMode,
   reconcileBoundaryLayers,
   shouldPersistBoundaryReconciliation,
 } from '../src/lib/account-observability/priority-boundary-reconciliation';
@@ -37,4 +38,9 @@ test('empty failed records are persisted so their status becomes restored', () =
   assert.equal(shouldPersistBoundaryReconciliation('FAILED_ADJUST', 0, unchangedEmpty), true);
   assert.equal(shouldPersistBoundaryReconciliation('FAILED_RESTORE', 0, unchangedEmpty), true);
   assert.equal(shouldPersistBoundaryReconciliation('RESTORED', 0, unchangedEmpty), false);
+});
+
+test('reset-all mode clears monitor factors without deriving a remote priority write', () => {
+  assert.deepEqual(boundaryFactorsForMode([10, 20, 30], false), [10, 20, 30]);
+  assert.deepEqual(boundaryFactorsForMode([10, 20, 30], true), []);
 });

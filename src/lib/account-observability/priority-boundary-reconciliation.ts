@@ -11,6 +11,10 @@ export interface BoundaryReconciliationResult {
   removedLayers: number;
 }
 
+export function boundaryFactorsForMode(factors: readonly number[], resetAll: boolean): readonly number[] {
+  return resetAll ? [] : factors;
+}
+
 export function reconcileBoundaryLayers(
   factors: readonly number[],
   candidates: readonly BoundaryCandidate[],

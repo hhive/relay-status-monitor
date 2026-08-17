@@ -1,11 +1,13 @@
 import { prisma } from '../src/lib/db';
 import {
+  boundaryFactorsForMode,
   reconcileBoundaryLayers,
   shouldPersistBoundaryReconciliation,
   type BoundaryCandidate,
 } from '../src/lib/account-observability/priority-boundary-reconciliation';
 
 const apply = process.argv.includes('--apply');
+const resetAll = process.argv.includes('--reset-all');
 async function main(): Promise<void> {
   if (!apply) console.log('dry-run: pass --apply to persist the displayed reconciliation');
   const adjustments = await prisma.accountPriorityAdjustment.findMany({
@@ -21,7 +23,10 @@ async function main(): Promise<void> {
     where: { accountId: adjustment.accountId },
     select: { ruleId: true, adjustmentLevel: true, active: true, updatedAt: true },
   });
-  const result = reconcileBoundaryLayers(adjustment.appliedFactors, candidates);
+  const result = reconcileBoundaryLayers(
+    boundaryFactorsForMode(adjustment.appliedFactors, resetAll),
+    candidates,
+  );
   const originalLayers = candidates.reduce((sum, candidate) => sum + Math.max(0, candidate.adjustmentLevel), 0);
   if (!shouldPersistBoundaryReconciliation(adjustment.status, adjustment.appliedFactors.length, result)) continue;
   const retainedLayers = [...result.allocations.values()].reduce((sum, value) => sum + value, 0);
@@ -78,7 +83,7 @@ async function main(): Promise<void> {
     }
   }, { timeout: 30_000 });
   }
-  console.log(JSON.stringify({ mode: apply ? 'apply' : 'dry-run', changed: plans.length }));
+  console.log(JSON.stringify({ mode: apply ? 'apply' : 'dry-run', resetAll, changed: plans.length }));
   await prisma.$disconnect();
 }
 
