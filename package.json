@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "pnpm run docs:build && next build",
+    "docs:build": "pnpm --dir ../docs-site build",
     "start": "next start",
     "lint": "next lint",
     "test": "tsx --test tests/*.test.ts",
