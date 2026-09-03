@@ -3,7 +3,7 @@ import { mkdir, rename, writeFile, readdir, readFile, unlink, stat } from 'node:
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getSetting, setSetting, SettingKeys } from '@/lib/settings';
+import { getSetting, setSetting, FeishuSettingKeys } from '@/lib/settings';
 
 export type DocsSyncStatus = 'idle' | 'running' | 'succeeded' | 'failed';
 export interface DocsSyncState { status: DocsSyncStatus; lastRunAt: string | null; message: string; }
@@ -42,7 +42,7 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
   const stored = options.env ? null : await getFeishuConfig();
   const url = (stored?.url ?? env.FEISHU_DOC_URL)?.trim();
   const appId = (stored?.appId ?? env.FEISHU_APP_ID)?.trim();
-  const appSecret = (stored?.secretConfigured ? await getSetting(SettingKeys.FEISHU_APP_SECRET) : env.FEISHU_APP_SECRET)?.trim();
+  const appSecret = (stored?.secretConfigured ? await getSetting(FeishuSettingKeys.APP_SECRET) : env.FEISHU_APP_SECRET)?.trim();
   const documentId = url ? documentIdFromUrl(url) : null;
   const now = new Date().toISOString();
   state = { status: 'running', lastRunAt: now, message: '正在从飞书同步文档' };
@@ -82,11 +82,8 @@ export function resetDocsSyncState(): void { state = { status: 'idle', lastRunAt
 
 export async function getFeishuConfig() {
   const [url, appId, apiBase, output, secret] = await Promise.all([
-    getSetting(SettingKeys.FEISHU_DOC_URL, process.env.FEISHU_DOC_URL ?? ''),
-    getSetting(SettingKeys.FEISHU_APP_ID, process.env.FEISHU_APP_ID ?? ''),
-    getSetting(SettingKeys.FEISHU_API_BASE, process.env.FEISHU_API_BASE ?? 'https://open.feishu.cn'),
-    getSetting(SettingKeys.FEISHU_DOC_OUTPUT, process.env.FEISHU_DOC_OUTPUT ?? ''),
-    getSetting(SettingKeys.FEISHU_APP_SECRET, process.env.FEISHU_APP_SECRET ?? ''),
+    getSetting(FeishuSettingKeys.DOC_URL, process.env.FEISHU_DOC_URL ?? ''), getSetting(FeishuSettingKeys.APP_ID, process.env.FEISHU_APP_ID ?? ''),
+    getSetting(FeishuSettingKeys.API_BASE, process.env.FEISHU_API_BASE ?? 'https://open.feishu.cn'), getSetting(FeishuSettingKeys.DOC_OUTPUT, process.env.FEISHU_DOC_OUTPUT ?? ''), getSetting(FeishuSettingKeys.APP_SECRET, process.env.FEISHU_APP_SECRET ?? ''),
   ]);
   return { url, appId, apiBase, output, secretConfigured: Boolean(secret) };
 }
@@ -95,11 +92,10 @@ export async function saveFeishuConfig(input: { url: string; appId: string; appS
   const url = input.url.trim(); const appId = input.appId.trim();
   if (!url || !appId) throw new Error('飞书文档链接和 App ID 不能为空');
   if (!/^https:\/\//.test(url) || /[\r\n]/.test(url) || /[\r\n]/.test(appId)) throw new Error('飞书配置格式无效');
-  await setSetting(SettingKeys.FEISHU_DOC_URL, url);
-  await setSetting(SettingKeys.FEISHU_APP_ID, appId);
-  if (input.appSecret?.trim()) await setSetting(SettingKeys.FEISHU_APP_SECRET, input.appSecret.trim());
-  if (input.apiBase?.trim()) await setSetting(SettingKeys.FEISHU_API_BASE, input.apiBase.trim());
-  if (input.output?.trim()) await setSetting(SettingKeys.FEISHU_DOC_OUTPUT, input.output.trim());
+  await setSetting(FeishuSettingKeys.DOC_URL, url); await setSetting(FeishuSettingKeys.APP_ID, appId);
+  if (input.appSecret?.trim()) await setSetting(FeishuSettingKeys.APP_SECRET, input.appSecret.trim());
+  if (input.apiBase?.trim()) await setSetting(FeishuSettingKeys.API_BASE, input.apiBase.trim());
+  if (input.output?.trim()) await setSetting(FeishuSettingKeys.DOC_OUTPUT, input.output.trim());
   return getFeishuConfig();
 }
 

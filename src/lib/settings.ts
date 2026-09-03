@@ -67,17 +67,16 @@ export const SettingKeys = {
   BACKUP_LAST_AT: 'remote_backup_last_at',
   BACKUP_LAST_FILE: 'remote_backup_last_file',
   BACKUP_LAST_ERROR: 'remote_backup_last_error',
-  FEISHU_DOC_URL: 'feishu_doc_url',
-  FEISHU_APP_ID: 'feishu_app_id',
-  FEISHU_APP_SECRET: 'feishu_app_secret',
-  FEISHU_API_BASE: 'feishu_api_base',
-  FEISHU_DOC_OUTPUT: 'feishu_doc_output',
+} as const;
+
+export const FeishuSettingKeys = {
+  DOC_URL: 'feishu_doc_url', APP_ID: 'feishu_app_id', APP_SECRET: 'feishu_app_secret', API_BASE: 'feishu_api_base', DOC_OUTPUT: 'feishu_doc_output',
 } as const;
 
 export type EditableSettingKey = typeof SettingKeys[keyof typeof SettingKeys];
 
 export const EDITABLE_SETTING_KEYS: readonly EditableSettingKey[] = Object.freeze(
-  Object.values(SettingKeys).filter((key) => key !== SettingKeys.BACKUP_PASSWORD && key !== SettingKeys.FEISHU_APP_SECRET),
+  Object.values(SettingKeys).filter((key) => key !== SettingKeys.BACKUP_PASSWORD),
 );
 
 const editableSettingKeySet = new Set<string>(EDITABLE_SETTING_KEYS);
