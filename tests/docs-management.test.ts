@@ -47,6 +47,26 @@ test('syncFeishuDocs fetches raw content and publishes VitePress source', async 
   assert.match(String(calls[1]?.init?.headers && new Headers(calls[1].init?.headers).get('authorization')), /Bearer test-token/);
 });
 
+test('syncFeishuDocs resolves Feishu wiki links before reading the Docx body', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-wiki-'));
+  const calls: string[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input); calls.push(url);
+    if (url.includes('tenant_access_token')) return new Response(JSON.stringify({ tenant_access_token: 'wiki-token' }), { status: 200 });
+    if (url.includes('/wiki/v2/spaces/get_node')) return new Response(JSON.stringify({ data: { node: { obj_token: 'docx-resolved-token', obj_type: 'docx' } } }), { status: 200 });
+    return new Response(JSON.stringify({ data: { content: '# Wiki synced' } }), { status: 200 });
+  }) as typeof fetch;
+  const result = await syncFeishuDocs({
+    cwd,
+    env: { FEISHU_DOC_URL: 'https://xiaoni-ai.feishu.cn/wiki/FQY6wW7fhifg2YkRH7bcYyP3n4e', FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret' } as unknown as NodeJS.ProcessEnv,
+    fetchImpl,
+    runBuild: async () => {},
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.ok(calls.some((url) => url.includes('/wiki/v2/spaces/get_node?token=FQY6wW7fhifg2YkRH7bcYyP3n4e')));
+  assert.ok(calls.some((url) => url.includes('/docx/v1/documents/docx-resolved-token/raw_content')));
+});
+
 test('syncFeishuDocs reports missing configuration without network calls', async () => {
   let called = false;
   const result = await syncFeishuDocs({ env: {} as unknown as NodeJS.ProcessEnv, fetchImpl: (async () => { called = true; return new Response(); }) as typeof fetch, runBuild: async () => {} });

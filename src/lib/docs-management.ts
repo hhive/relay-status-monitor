@@ -20,12 +20,12 @@ export function requestDocsSync(): DocsSyncState {
   state = { status: 'running', lastRunAt: new Date().toISOString(), message: '同步任务已排队，等待飞书适配器执行' };
   return getDocsSyncState();
 }
-function documentIdFromUrl(value: string): string | null {
+function documentRefFromUrl(value: string): { kind: 'document' | 'wiki'; id: string } | null {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol)) return null;
-    const match = url.pathname.match(/\/(?:docx|docs)\/([A-Za-z0-9_-]+)/);
-    return match?.[1] ?? null;
+    const match = url.pathname.match(/\/(docx|docs|wiki)\/([A-Za-z0-9_-]+)/);
+    return match ? { kind: match[1] === 'wiki' ? 'wiki' : 'document', id: match[2] } : null;
   } catch { return null; }
 }
 
@@ -43,12 +43,12 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
   const url = (stored?.url ?? env.FEISHU_DOC_URL)?.trim();
   const appId = (stored?.appId ?? env.FEISHU_APP_ID)?.trim();
   const appSecret = (stored?.secretConfigured ? await getSetting(FeishuSettingKeys.APP_SECRET) : env.FEISHU_APP_SECRET)?.trim();
-  const documentId = url ? documentIdFromUrl(url) : null;
+  const documentRef = url ? documentRefFromUrl(url) : null;
   const now = new Date().toISOString();
   state = { status: 'running', lastRunAt: now, message: '正在从飞书同步文档' };
   try {
     if (!url || !appId || !appSecret) throw new Error('未配置 FEISHU_DOC_URL、FEISHU_APP_ID 或 FEISHU_APP_SECRET');
-    if (!documentId) throw new Error('FEISHU_DOC_URL 不是受支持的飞书文档链接');
+    if (!documentRef) throw new Error('FEISHU_DOC_URL 不是受支持的飞书文档链接');
     const base = (stored?.apiBase ?? env.FEISHU_API_BASE ?? 'https://open.feishu.cn').replace(/\/$/, '');
     const tokenResponse = await fetchImpl(`${base}/open-apis/auth/v3/tenant_access_token/internal`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -57,7 +57,18 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
     if (!tokenResponse.ok) throw new Error(`飞书鉴权失败（HTTP ${tokenResponse.status}）`);
     const tokenPayload = await tokenResponse.json() as { tenant_access_token?: string; code?: number; msg?: string };
     if (!tokenPayload.tenant_access_token) throw new Error(`飞书鉴权失败：${tokenPayload.msg ?? '未返回 token'}`);
-    const contentResponse = await fetchImpl(`${base}/open-apis/docx/v1/documents/${documentId}/raw_content`, {
+    let documentId = documentRef.id;
+    if (documentRef.kind === 'wiki') {
+      const nodeResponse = await fetchImpl(`${base}/open-apis/wiki/v2/spaces/get_node?token=${encodeURIComponent(documentRef.id)}`, {
+        headers: { Authorization: `Bearer ${tokenPayload.tenant_access_token}` },
+      });
+      if (!nodeResponse.ok) throw new Error(`飞书知识库节点读取失败（HTTP ${nodeResponse.status}）`);
+      const nodePayload = await nodeResponse.json() as { data?: { node?: { obj_token?: string; obj_type?: string }; obj_token?: string; obj_type?: string }; msg?: string };
+      const node = nodePayload.data?.node ?? nodePayload.data;
+      if (!node?.obj_token || (node.obj_type && node.obj_type !== 'docx')) throw new Error(`飞书知识库节点不是可读取的 Docx 文档：${nodePayload.msg ?? '类型不匹配'}`);
+      documentId = node.obj_token;
+    }
+    const contentResponse = await fetchImpl(`${base}/open-apis/docx/v1/documents/${encodeURIComponent(documentId)}/raw_content`, {
       headers: { Authorization: `Bearer ${tokenPayload.tenant_access_token}` },
     });
     if (!contentResponse.ok) throw new Error(`飞书文档读取失败（HTTP ${contentResponse.status}）`);
