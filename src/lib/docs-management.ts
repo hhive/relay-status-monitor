@@ -19,16 +19,35 @@ function renderFeishuHtml(markdown: string): string {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>飞书同步文档</title><style>body{margin:0;background:#f8fafc;color:#1f2937;font:16px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:860px;margin:0 auto;padding:48px 24px 80px;background:#fff;min-height:100vh;box-sizing:border-box}h1{font-size:32px;line-height:1.25;margin:0 0 28px;border-bottom:1px solid #e5e7eb;padding-bottom:18px}h2{font-size:24px;margin-top:32px}h3{font-size:19px;margin-top:24px}p{margin:12px 0}ul{padding-left:24px}</style></head><body><main>${body}</main></body></html>`;
 }
 
-function blocksToMarkdown(items: Array<Record<string, any>>): string {
+type FeishuTextElement = { text_run?: { content?: string } };
+type FeishuTextBlock = { elements?: FeishuTextElement[] };
+type FeishuBlock = {
+  block_id?: string;
+  block_type?: number;
+  page?: FeishuTextBlock;
+  text?: FeishuTextBlock;
+  heading1?: FeishuTextBlock;
+  heading2?: FeishuTextBlock;
+  heading3?: FeishuTextBlock;
+  bullet?: FeishuTextBlock;
+  ordered?: FeishuTextBlock;
+  image?: { token?: string };
+};
+
+function textElements(payload?: FeishuTextBlock): string {
+  return payload?.elements?.map((element) => element.text_run?.content ?? '').join('') ?? '';
+}
+
+function blocksToMarkdown(items: FeishuBlock[]): string {
   return items.flatMap((block) => {
     const type = block.block_type as number;
-    if (type === 3) return [`# ${block.heading1?.elements?.map((e: any) => e.text_run?.content ?? '').join('') ?? ''}`];
-    if (type === 4) return [`## ${block.heading2?.elements?.map((e: any) => e.text_run?.content ?? '').join('') ?? ''}`];
-    if (type === 5) return [`### ${block.heading3?.elements?.map((e: any) => e.text_run?.content ?? '').join('') ?? ''}`];
+    if (type === 3) return [`# ${textElements(block.heading1)}`];
+    if (type === 4) return [`## ${textElements(block.heading2)}`];
+    if (type === 5) return [`### ${textElements(block.heading3)}`];
     if (type === 27) return [`![飞书图片](feishu-asset-${block.image?.token ?? block.block_id})`];
-    if (type === 12 || type === 13) return [`- ${block.bullet?.elements?.map((e: any) => e.text_run?.content ?? '').join('') ?? block.ordered?.elements?.map((e: any) => e.text_run?.content ?? '').join('') ?? ''}`];
+    if (type === 12 || type === 13) return [`- ${textElements(block.bullet) || textElements(block.ordered)}`];
     const payload = block.text ?? block.page;
-    if (payload?.elements) return [payload.elements.map((e: any) => e.text_run?.content ?? '').join('')];
+    if (payload?.elements) return [textElements(payload)];
     return [];
   }).join('\n\n');
 }
@@ -98,7 +117,7 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
     let content = payload.data?.content ?? payload.content;
     const blocksResponse = await fetchImpl(`${base}/open-apis/docx/v1/documents/${encodeURIComponent(documentId)}/blocks?page_size=500`, { headers: { Authorization: `Bearer ${tokenPayload.tenant_access_token}` } });
     if (blocksResponse.ok) {
-      const blocksPayload = await blocksResponse.json() as { data?: { items?: Array<Record<string, any>> } };
+      const blocksPayload = await blocksResponse.json() as { data?: { items?: FeishuBlock[] } };
       const structured = blocksToMarkdown(blocksPayload.data?.items ?? []);
       if (structured.trim()) content = structured;
     }
