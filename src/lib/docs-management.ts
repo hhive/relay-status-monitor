@@ -84,7 +84,8 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
     const content = payload.data?.content ?? payload.content;
     if (typeof content !== 'string') throw new Error(`飞书文档读取失败：${payload.msg ?? '响应缺少正文'}`);
     const cwd = options.cwd ?? process.cwd();
-    const output = path.resolve(cwd, stored?.output || env.FEISHU_DOC_OUTPUT || path.join(env.DOCS_DATA_DIR ?? 'docs-site', 'feishu.md'));
+    const defaultOutput = options.cwd ? path.join(env.DOCS_DATA_DIR ?? 'docs-site', 'feishu.md') : '/var/lib/relay-status-monitor/feishu.md';
+    const output = path.resolve(cwd, stored?.output || env.FEISHU_DOC_OUTPUT || defaultOutput);
     await mkdir(path.dirname(output), { recursive: true });
     const temporary = `${output}.tmp-${process.pid}`;
     await writeFile(temporary, `---\ntitle: 飞书同步文档\n---\n\n${content.trim()}\n`, 'utf8');
