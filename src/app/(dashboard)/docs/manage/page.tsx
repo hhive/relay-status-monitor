@@ -14,6 +14,7 @@ type FeishuConfig = { url: string; appId: string; apiBase: string; output: strin
 export default function DocsManagementPage() {
   const [state, setState] = useState<DocsState | null>(null);
   const [loading, setLoading] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [documents, setDocuments] = useState<Doc[]>([]);
   const [draft, setDraft] = useState({ id: '', title: '', content: '' });
   const [config, setConfig] = useState({ url: '', appId: '', appSecret: '', apiBase: 'https://open.feishu.cn', output: '' });
@@ -22,8 +23,17 @@ export default function DocsManagementPage() {
   async function loadDocuments() { const response = await apiFetch('/api/docs/documents'); if (response.ok) setDocuments((await response.json()).documents); }
   async function sync() {
     setLoading(true);
-    try { const response = await apiFetch('/api/docs/sync', { method: 'POST' }); if (response.ok) setState(await response.json()); }
-    finally { setLoading(false); }
+    setSyncError(null);
+    try {
+      const response = await apiFetch('/api/docs/sync', { method: 'POST' });
+      const body = await response.json().catch(() => ({})) as DocsState & { error?: string };
+      if (!response.ok) { setSyncError(body.error ?? `同步请求失败（HTTP ${response.status}）`); return; }
+      setState(body);
+      if (body.status === 'failed') setSyncError(body.message || '同步失败');
+      await loadDocuments();
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : '同步请求失败');
+    } finally { setLoading(false); }
   }
   useEffect(() => { void load(); }, []);
   useEffect(() => { void loadDocuments(); }, []);
@@ -41,7 +51,7 @@ export default function DocsManagementPage() {
       <PageHeader icon={BookOpen} title="文档管理" />
       <div className="grid gap-4 md:grid-cols-2">
         <Card><CardHeader><CardTitle>VitePress 文档站</CardTitle></CardHeader><CardContent className="flex items-center justify-between gap-4"><p className="text-sm text-muted-foreground">独立静态站点展示已发布的 Sub2API 文档。</p><Button asChild variant="outline" size="sm"><a href="/docs/" target="_blank" rel="noreferrer">打开站点 <ExternalLink /></a></Button></CardContent></Card>
-        <Card><CardHeader><CardTitle>飞书同步</CardTitle></CardHeader><CardContent className="space-y-3"><p className="text-sm text-muted-foreground">{state?.message ?? '正在读取状态'}</p>{state?.lastRunAt && <p className="text-xs text-muted-foreground">最近请求：{new Date(state.lastRunAt).toLocaleString()}</p>}<Button onClick={sync} disabled={loading || state?.status === 'running'}><RefreshCw className={loading ? 'animate-spin' : ''} />立即同步</Button></CardContent></Card>
+        <Card><CardHeader><CardTitle>飞书同步</CardTitle></CardHeader><CardContent className="space-y-3"><p className="text-sm text-muted-foreground">{state?.message ?? '正在读取状态'}</p>{state?.lastRunAt && <p className="text-xs text-muted-foreground">最近请求：{new Date(state.lastRunAt).toLocaleString()}</p>}{syncError && <p role="alert" className="text-sm text-destructive">{syncError}</p>}<Button onClick={sync} disabled={loading || state?.status === 'running'}><RefreshCw className={loading ? 'animate-spin' : ''} />立即同步</Button></CardContent></Card>
       </div>
       <Card><CardHeader><CardTitle>飞书配置</CardTitle></CardHeader><CardContent className="grid gap-3 md:grid-cols-2">
         <label className="space-y-1 text-sm"><span>文档链接</span><input className="w-full rounded border px-2 py-1" value={config.url} onChange={(e) => setConfig({ ...config, url: e.target.value })} placeholder="https://example.feishu.cn/docx/..." /></label>
