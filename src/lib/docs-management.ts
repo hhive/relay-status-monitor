@@ -9,14 +9,17 @@ export interface DocsSyncState { status: DocsSyncStatus; lastRunAt: string | nul
 let state: DocsSyncState = { status: 'idle', lastRunAt: null, message: '尚未执行同步' };
 function renderFeishuHtml(markdown: string): string {
   const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const inline = (value: string) => escape(value).replace(/https:\/\/[^\s<]+/g, (url) => `<a href="${url}" rel="noreferrer">${url}</a>`);
   const body = markdown.split(/\r?\n/).map((line) => {
+    const image = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (image) return `<figure><img src="${escape(image[2])}" alt="${escape(image[1])}" loading="lazy"></figure>`;
     if (/^### /.test(line)) return `<h3>${escape(line.slice(4))}</h3>`;
     if (/^## /.test(line)) return `<h2>${escape(line.slice(3))}</h2>`;
     if (/^# /.test(line)) return `<h1>${escape(line.slice(2))}</h1>`;
     if (/^[-*] /.test(line)) return `<li>${escape(line.slice(2))}</li>`;
-    return line.trim() ? `<p>${escape(line)}</p>` : '';
+    return line.trim() ? `<p>${inline(line)}</p>` : '';
   }).join('\n').replace(/(<li>.*<\/li>\n?)+/g, (items) => `<ul>${items}</ul>`);
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>飞书同步文档</title><style>body{margin:0;background:#f8fafc;color:#1f2937;font:16px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:860px;margin:0 auto;padding:48px 24px 80px;background:#fff;min-height:100vh;box-sizing:border-box}h1{font-size:32px;line-height:1.25;margin:0 0 28px;border-bottom:1px solid #e5e7eb;padding-bottom:18px}h2{font-size:24px;margin-top:32px}h3{font-size:19px;margin-top:24px}p{margin:12px 0}ul{padding-left:24px}</style></head><body><main>${body}</main></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>飞书同步文档</title><style>body{margin:0;background:#f8fafc;color:#1f2937;font:16px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:860px;margin:0 auto;padding:48px 24px 80px;background:#fff;min-height:100vh;box-sizing:border-box}h1{font-size:32px;line-height:1.25;margin:0 0 28px;border-bottom:1px solid #e5e7eb;padding-bottom:18px}h2{font-size:24px;margin-top:32px}h3{font-size:19px;margin-top:24px}p{margin:12px 0}ul{padding-left:24px}a{color:#2563eb;text-decoration:none}a:hover{text-decoration:underline}figure{margin:20px 0}img{display:block;max-width:100%;height:auto;border:1px solid #e5e7eb}</style></head><body><main>${body}</main></body></html>`;
 }
 
 type FeishuTextElement = { text_run?: { content?: string } };
@@ -44,12 +47,29 @@ function blocksToMarkdown(items: FeishuBlock[]): string {
     if (type === 3) return [`# ${textElements(block.heading1)}`];
     if (type === 4) return [`## ${textElements(block.heading2)}`];
     if (type === 5) return [`### ${textElements(block.heading3)}`];
-    if (type === 27) return [`![飞书图片](feishu-asset-${block.image?.token ?? block.block_id})`];
+    if (type === 27) return [`![飞书图片](@@FEISHU_ASSET:${block.image?.token ?? block.block_id}@@)`];
     if (type === 12 || type === 13) return [`- ${textElements(block.bullet) || textElements(block.ordered)}`];
     const payload = block.text ?? block.page;
     if (payload?.elements) return [textElements(payload)];
     return [];
   }).join('\n\n');
+}
+
+async function downloadFeishuAssets(markdown: string, base: string, accessToken: string, publicDocs: string, fetchImpl: typeof fetch): Promise<string> {
+  const tokens = [...markdown.matchAll(/@@FEISHU_ASSET:([A-Za-z0-9_-]+)@@/g)].map((match) => match[1]);
+  let result = markdown;
+  for (const token of new Set(tokens)) {
+    const response = await fetchImpl(`${base}/open-apis/drive/v1/medias/${encodeURIComponent(token)}/download`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) { result = result.replaceAll(`@@FEISHU_ASSET:${token}@@`, '#'); continue; }
+    const type = response.headers.get('content-type') ?? '';
+    const extension = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : type.includes('gif') ? 'gif' : 'jpg';
+    const relative = `assets/feishu/${token}.${extension}`;
+    const target = path.join(publicDocs, relative);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, Buffer.from(await response.arrayBuffer()));
+    result = result.replaceAll(`@@FEISHU_ASSET:${token}@@`, `/docs/${relative}`);
+  }
+  return result;
 }
 
 export function isDocsAdminSession(session: ApiSession | null): boolean {
@@ -123,14 +143,15 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
     }
     if (typeof content !== 'string') throw new Error(`飞书文档读取失败：${payload.msg ?? '响应缺少正文'}`);
     const cwd = options.cwd ?? process.cwd();
+    const publicDocs = options.cwd ? path.resolve(cwd, 'public/docs') : '/var/lib/relay-status-monitor/docs';
+    await mkdir(publicDocs, { recursive: true });
+    content = await downloadFeishuAssets(content, base, tokenPayload.tenant_access_token, publicDocs, fetchImpl);
     const defaultOutput = options.cwd ? path.join(env.DOCS_DATA_DIR ?? 'docs-site', 'feishu.md') : '/var/lib/relay-status-monitor/feishu.md';
     const output = path.resolve(cwd, stored?.output || env.FEISHU_DOC_OUTPUT || defaultOutput);
     await mkdir(path.dirname(output), { recursive: true });
     const temporary = `${output}.tmp-${process.pid}`;
     await writeFile(temporary, `---\ntitle: 飞书同步文档\n---\n\n${content.trim()}\n`, 'utf8');
     await rename(temporary, output);
-    const publicDocs = options.cwd ? path.resolve(cwd, 'public/docs') : '/var/lib/relay-status-monitor/docs';
-    await mkdir(publicDocs, { recursive: true });
     await writeFile(path.join(publicDocs, 'index.html'), renderFeishuHtml(content.trim()), 'utf8');
     if (options.runBuild) await options.runBuild();
     state = { status: 'succeeded', lastRunAt: now, message: `同步成功：${documentId}` };

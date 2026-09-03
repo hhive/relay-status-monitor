@@ -78,6 +78,7 @@ test('syncFeishuDocs prefers structured Docx blocks for headings, links, and ima
       { block_type: 2, text: { elements: [{ text_run: { content: 'https://example.com' } }] } },
       { block_type: 27, block_id: 'img-1', image: { token: 'image-token' } },
     ] } }));
+    if (url.includes('/medias/image-token/download')) return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } });
     return new Response(JSON.stringify({ data: { content: 'fallback' } }));
   }) as typeof fetch;
   const result = await syncFeishuDocs({ cwd, env: { FEISHU_DOC_URL: 'https://example.feishu.cn/docx/abc', FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret' } as unknown as NodeJS.ProcessEnv, fetchImpl, runBuild: async () => {} });
@@ -85,7 +86,8 @@ test('syncFeishuDocs prefers structured Docx blocks for headings, links, and ima
   const html = await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8');
   assert.match(html, /结构化标题/);
   assert.match(html, /https:\/\/example\.com/);
-  assert.match(html, /feishu-asset-image-token/);
+  assert.match(html, /<img src="\/docs\/assets\/feishu\/image-token\.png"/);
+  assert.deepEqual([...await readFile(path.join(cwd, 'public/docs/assets/feishu/image-token.png'))], [1, 2, 3]);
 });
 
 test('syncFeishuDocs reports missing configuration without network calls', async () => {
