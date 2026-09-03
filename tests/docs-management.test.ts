@@ -68,6 +68,26 @@ test('syncFeishuDocs resolves Feishu wiki links before reading the Docx body', a
   assert.ok(calls.some((url) => url.includes('/docx/v1/documents/docx-resolved-token/raw_content')));
 });
 
+test('syncFeishuDocs prefers structured Docx blocks for headings, links, and images', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-blocks-'));
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('tenant_access_token')) return new Response(JSON.stringify({ tenant_access_token: 'token' }));
+    if (url.includes('/blocks')) return new Response(JSON.stringify({ data: { items: [
+      { block_type: 3, heading1: { elements: [{ text_run: { content: '结构化标题' } }] } },
+      { block_type: 2, text: { elements: [{ text_run: { content: 'https://example.com' } }] } },
+      { block_type: 27, block_id: 'img-1', image: { token: 'image-token' } },
+    ] } }));
+    return new Response(JSON.stringify({ data: { content: 'fallback' } }));
+  }) as typeof fetch;
+  const result = await syncFeishuDocs({ cwd, env: { FEISHU_DOC_URL: 'https://example.feishu.cn/docx/abc', FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret' } as unknown as NodeJS.ProcessEnv, fetchImpl, runBuild: async () => {} });
+  assert.equal(result.status, 'succeeded');
+  const html = await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8');
+  assert.match(html, /结构化标题/);
+  assert.match(html, /https:\/\/example\.com/);
+  assert.match(html, /feishu-asset-image-token/);
+});
+
 test('syncFeishuDocs reports missing configuration without network calls', async () => {
   let called = false;
   const result = await syncFeishuDocs({ env: {} as unknown as NodeJS.ProcessEnv, fetchImpl: (async () => { called = true; return new Response(); }) as typeof fetch, runBuild: async () => {} });

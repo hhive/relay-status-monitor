@@ -19,6 +19,20 @@ function renderFeishuHtml(markdown: string): string {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>飞书同步文档</title><style>body{margin:0;background:#f8fafc;color:#1f2937;font:16px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:860px;margin:0 auto;padding:48px 24px 80px;background:#fff;min-height:100vh;box-sizing:border-box}h1{font-size:32px;line-height:1.25;margin:0 0 28px;border-bottom:1px solid #e5e7eb;padding-bottom:18px}h2{font-size:24px;margin-top:32px}h3{font-size:19px;margin-top:24px}p{margin:12px 0}ul{padding-left:24px}</style></head><body><main>${body}</main></body></html>`;
 }
 
+function blocksToMarkdown(items: Array<Record<string, any>>): string {
+  return items.flatMap((block) => {
+    const type = block.block_type as number;
+    if (type === 3) return [`# ${block.heading1?.elements?.map((e: any) => e.text_run?.content ?? '').join('') ?? ''}`];
+    if (type === 4) return [`## ${block.heading2?.elements?.map((e: any) => e.text_run?.content ?? '').join('') ?? ''}`];
+    if (type === 5) return [`### ${block.heading3?.elements?.map((e: any) => e.text_run?.content ?? '').join('') ?? ''}`];
+    if (type === 27) return [`![飞书图片](feishu-asset-${block.image?.token ?? block.block_id})`];
+    if (type === 12 || type === 13) return [`- ${block.bullet?.elements?.map((e: any) => e.text_run?.content ?? '').join('') ?? block.ordered?.elements?.map((e: any) => e.text_run?.content ?? '').join('') ?? ''}`];
+    const payload = block.text ?? block.page;
+    if (payload?.elements) return [payload.elements.map((e: any) => e.text_run?.content ?? '').join('')];
+    return [];
+  }).join('\n\n');
+}
+
 export function isDocsAdminSession(session: ApiSession | null): boolean {
   return session?.source === 'sub2api';
 }
@@ -81,7 +95,13 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
     });
     if (!contentResponse.ok) throw new Error(`飞书文档读取失败（HTTP ${contentResponse.status}）`);
     const payload = await contentResponse.json() as { data?: { content?: string }; content?: string; msg?: string };
-    const content = payload.data?.content ?? payload.content;
+    let content = payload.data?.content ?? payload.content;
+    const blocksResponse = await fetchImpl(`${base}/open-apis/docx/v1/documents/${encodeURIComponent(documentId)}/blocks?page_size=500`, { headers: { Authorization: `Bearer ${tokenPayload.tenant_access_token}` } });
+    if (blocksResponse.ok) {
+      const blocksPayload = await blocksResponse.json() as { data?: { items?: Array<Record<string, any>> } };
+      const structured = blocksToMarkdown(blocksPayload.data?.items ?? []);
+      if (structured.trim()) content = structured;
+    }
     if (typeof content !== 'string') throw new Error(`飞书文档读取失败：${payload.msg ?? '响应缺少正文'}`);
     const cwd = options.cwd ?? process.cwd();
     const defaultOutput = options.cwd ? path.join(env.DOCS_DATA_DIR ?? 'docs-site', 'feishu.md') : '/var/lib/relay-status-monitor/feishu.md';
