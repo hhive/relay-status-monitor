@@ -90,7 +90,7 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
     const temporary = `${output}.tmp-${process.pid}`;
     await writeFile(temporary, `---\ntitle: 飞书同步文档\n---\n\n${content.trim()}\n`, 'utf8');
     await rename(temporary, output);
-    const publicDocs = path.resolve(cwd, 'public/docs');
+    const publicDocs = options.cwd ? path.resolve(cwd, 'public/docs') : '/var/lib/relay-status-monitor/docs';
     await mkdir(publicDocs, { recursive: true });
     await writeFile(path.join(publicDocs, 'index.html'), renderFeishuHtml(content.trim()), 'utf8');
     if (options.runBuild) await options.runBuild();
