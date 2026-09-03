@@ -79,6 +79,11 @@ openssl rand -base64 48
 | `CRON_SECRET` | 建议 | 定时采集接口的 Bearer 密钥，仅从服务端环境变量读取。设置 API 和数据库不保存该值。 |
 | `NEXT_PUBLIC_APP_NAME` | 否 | 预留的客户端应用名称配置。 |
 | `ADMIN_PASSWORD` | seed 必填 | 基础 seed 为 `admin` 用户设置的密码。缺失或为空时 seed 会拒绝运行。 |
+| `FEISHU_DOC_URL` | 启用同步时必填 | 飞书 Docx 文档链接，例如 `https://example.feishu.cn/docx/xxxxxxxx`。 |
+| `FEISHU_APP_ID` | 启用同步时必填 | 飞书自建应用 App ID，仅服务端使用。 |
+| `FEISHU_APP_SECRET` | 启用同步时必填 | 飞书自建应用 App Secret，仅服务端使用。 |
+| `FEISHU_API_BASE` | 否 | 飞书 API 地址，默认 `https://open.feishu.cn`。 |
+| `FEISHU_DOC_OUTPUT` | 否 | 同步 Markdown 输出路径，默认 `docs-site/feishu.md`。 |
 
 不要把 `.env`、数据库导出、API Key、Access Token、Webhook 地址或签名密钥提交到版本库。
 
