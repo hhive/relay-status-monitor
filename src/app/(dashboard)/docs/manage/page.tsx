@@ -1,4 +1,4 @@
-'use client';
++'use client';
 
 import { useEffect, useState } from 'react';
 import { BookOpen, ExternalLink, RefreshCw } from 'lucide-react';
@@ -29,3 +29,4 @@ export default function DocsManagementPage() {
     </div>
   );
 }
+

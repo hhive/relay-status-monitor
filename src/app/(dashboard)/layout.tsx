@@ -15,7 +15,7 @@ const NAV_ITEMS = [
   { href: '/alert-records', label: '告警记录', icon: Bell },
   { href: '/scheduling-records', label: '调整记录', icon: ListRestart },
   { href: '/settings', label: '设置', icon: Settings },
-  { href: '/docs', label: '文档管理', icon: BookOpen },
+  { href: '/docs/manage', label: '文档管理', icon: BookOpen },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

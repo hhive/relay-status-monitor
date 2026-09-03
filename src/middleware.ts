@@ -23,6 +23,11 @@ const PUBLIC_PATHS = new Set([
   '/api/sub2api/admin-launch',
 ]);
 
+export function isPublicDocsPath(pathname: string): boolean {
+  return (pathname === '/docs' || pathname.startsWith('/docs/'))
+    && pathname !== '/docs/manage' && !pathname.startsWith('/docs/manage/');
+}
+
 export async function middleware(request: NextRequest) {
   const pathname = stripBasePath(request.nextUrl.pathname);
 
@@ -39,6 +44,7 @@ export async function middleware(request: NextRequest) {
     // 公开路径和静态资源无需本地会话。
     if (
       PUBLIC_PATHS.has(pathname) ||
+      isPublicDocsPath(pathname) ||
       pathname.startsWith('/_next/static/') ||
       pathname === '/_next/image' ||
       pathname === '/favicon.ico'
