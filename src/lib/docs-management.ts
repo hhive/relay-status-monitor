@@ -1,5 +1,5 @@
 import type { ApiSession } from '@/lib/auth';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile, readdir, readFile, unlink, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -63,7 +63,7 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
     const content = payload.data?.content ?? payload.content;
     if (typeof content !== 'string') throw new Error(`飞书文档读取失败：${payload.msg ?? '响应缺少正文'}`);
     const cwd = options.cwd ?? process.cwd();
-    const output = path.resolve(cwd, env.FEISHU_DOC_OUTPUT ?? 'docs-site/feishu.md');
+    const output = path.resolve(cwd, env.FEISHU_DOC_OUTPUT ?? path.join(env.DOCS_DATA_DIR ?? 'docs-site', 'feishu.md'));
     await mkdir(path.dirname(output), { recursive: true });
     const temporary = `${output}.tmp-${process.pid}`;
     await writeFile(temporary, `---\ntitle: 飞书同步文档\n---\n\n${content.trim()}\n`, 'utf8');
@@ -77,3 +77,64 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
   return getDocsSyncState();
 }
 export function resetDocsSyncState(): void { state = { status: 'idle', lastRunAt: null, message: '尚未执行同步' }; }
+
+export type ManagedDocumentSource = 'feishu' | 'local';
+export interface ManagedDocument {
+  id: string;
+  title: string;
+  source: ManagedDocumentSource;
+  content: string;
+  updatedAt: string;
+}
+
+function docsRoot(cwd = process.cwd(), env: NodeJS.ProcessEnv = process.env): string {
+  return path.resolve(cwd, env.DOCS_DATA_DIR ?? 'docs-site');
+}
+function safeId(value: string): string {
+  const id = value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (!id || id.split('/').some((part) => !/^[A-Za-z0-9_-]+$/.test(part))) throw new Error('文档标识只能包含字母、数字、下划线和短横线');
+  return id;
+}
+function parseDocument(id: string, source: ManagedDocumentSource, raw: string, updatedAt: string): ManagedDocument {
+  const match = raw.match(/^---\n(?:title:\s*(.*)\n)?---\n\n?([\s\S]*)$/);
+  return { id, source, title: match?.[1]?.trim() || id.split('/').at(-1) || id, content: match?.[2] ?? raw, updatedAt };
+}
+function fileFor(root: string, source: ManagedDocumentSource, id: string): string {
+  return path.join(root, source === 'local' ? 'local' : '', `${safeId(id)}.md`);
+}
+async function readDocument(file: string, id: string, source: ManagedDocumentSource): Promise<ManagedDocument> {
+  const [raw, metadata] = await Promise.all([readFile(file, 'utf8'), stat(file)]);
+  return parseDocument(id, source, raw, metadata.mtime.toISOString());
+}
+export async function listManagedDocuments(options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<ManagedDocument[]> {
+  const root = docsRoot(options.cwd, options.env);
+  const result: ManagedDocument[] = [];
+  const sources: Array<[ManagedDocumentSource, string]> = [['feishu', root], ['local', path.join(root, 'local')]];
+  for (const [source, directory] of sources) {
+    let entries;
+    try { entries = await readdir(directory, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      const id = entry.name.slice(0, -3);
+      try { result.push(await readDocument(path.join(directory, entry.name), id, source)); } catch { /* ignore unreadable files */ }
+    }
+  }
+  return result.sort((a, b) => a.id.localeCompare(b.id));
+}
+export async function createLocalDocument(input: { id: string; title: string; content: string }, options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<ManagedDocument> {
+  const id = safeId(input.id);
+  const file = fileFor(docsRoot(options.cwd, options.env), 'local', id);
+  await mkdir(path.dirname(file), { recursive: true });
+  try { await readFile(file); throw new Error('本地文档已存在'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  await writeFile(file, `---\ntitle: ${input.title.trim() || id}\n---\n\n${input.content ?? ''}\n`, 'utf8');
+  return readDocument(file, id, 'local');
+}
+export async function updateLocalDocument(id: string, input: { title: string; content: string }, options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<ManagedDocument> {
+  const file = fileFor(docsRoot(options.cwd, options.env), 'local', id);
+  await readFile(file);
+  await writeFile(file, `---\ntitle: ${input.title.trim() || id}\n---\n\n${input.content ?? ''}\n`, 'utf8');
+  return readDocument(file, safeId(id), 'local');
+}
+export async function deleteLocalDocument(id: string, options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<void> {
+  await unlink(fileFor(docsRoot(options.cwd, options.env), 'local', id));
+}

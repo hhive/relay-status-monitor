@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { isDocsAdminSession, requestDocsSync, resetDocsSyncState, syncFeishuDocs } from '../src/lib/docs-management';
+import { createLocalDocument, deleteLocalDocument, isDocsAdminSession, listManagedDocuments, requestDocsSync, resetDocsSyncState, syncFeishuDocs, updateLocalDocument } from '../src/lib/docs-management';
 import { isPublicDocsPath } from '../src/middleware';
 
 test('public docs paths exclude the SSO-protected management route', () => {
@@ -53,4 +53,16 @@ test('syncFeishuDocs reports missing configuration without network calls', async
   assert.equal(result.status, 'failed');
   assert.match(result.message, /未配置/);
   assert.equal(called, false);
+});
+
+test('local documents have independent CRUD and are listed separately from Feishu', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-local-'));
+  const env = { DOCS_DATA_DIR: 'content' } as unknown as NodeJS.ProcessEnv;
+  const created = await createLocalDocument({ id: 'intro', title: '本地介绍', content: '# Intro' }, { cwd, env });
+  assert.equal(created.source, 'local');
+  const updated = await updateLocalDocument('intro', { title: '更新介绍', content: '# Updated' }, { cwd, env });
+  assert.equal(updated.content.trim(), '# Updated');
+  assert.equal((await listManagedDocuments({ cwd, env })).length, 1);
+  await deleteLocalDocument('intro', { cwd, env });
+  assert.equal((await listManagedDocuments({ cwd, env })).length, 0);
 });
