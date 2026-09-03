@@ -44,6 +44,7 @@ test('syncFeishuDocs fetches raw content and publishes VitePress source', async 
   });
   assert.equal(result.status, 'succeeded');
   assert.equal(await readFile(path.join(cwd, 'docs-site/feishu.md'), 'utf8'), '---\ntitle: 飞书同步文档\n---\n\n# Synced\n\nHello from Feishu.\n');
+  assert.match(await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8'), /<h1>Synced<\/h1>/);
   assert.match(String(calls[1]?.init?.headers && new Headers(calls[1].init?.headers).get('authorization')), /Bearer test-token/);
 });
 

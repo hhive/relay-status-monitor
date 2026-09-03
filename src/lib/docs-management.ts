@@ -1,15 +1,23 @@
 import type { ApiSession } from '@/lib/auth';
 import { mkdir, rename, writeFile, readdir, readFile, unlink, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { getSetting, setSetting, FeishuSettingKeys } from '@/lib/settings';
 
 export type DocsSyncStatus = 'idle' | 'running' | 'succeeded' | 'failed';
 export interface DocsSyncState { status: DocsSyncStatus; lastRunAt: string | null; message: string; }
 
 let state: DocsSyncState = { status: 'idle', lastRunAt: null, message: '尚未执行同步' };
-const execFileAsync = promisify(execFile);
+function renderFeishuHtml(markdown: string): string {
+  const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const body = markdown.split(/\r?\n/).map((line) => {
+    if (/^### /.test(line)) return `<h3>${escape(line.slice(4))}</h3>`;
+    if (/^## /.test(line)) return `<h2>${escape(line.slice(3))}</h2>`;
+    if (/^# /.test(line)) return `<h1>${escape(line.slice(2))}</h1>`;
+    if (/^[-*] /.test(line)) return `<li>${escape(line.slice(2))}</li>`;
+    return line.trim() ? `<p>${escape(line)}</p>` : '';
+  }).join('\n').replace(/(<li>.*<\/li>\n?)+/g, (items) => `<ul>${items}</ul>`);
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>飞书同步文档</title><style>body{margin:0;background:#f8fafc;color:#1f2937;font:16px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:860px;margin:0 auto;padding:48px 24px 80px;background:#fff;min-height:100vh;box-sizing:border-box}h1{font-size:32px;line-height:1.25;margin:0 0 28px;border-bottom:1px solid #e5e7eb;padding-bottom:18px}h2{font-size:24px;margin-top:32px}h3{font-size:19px;margin-top:24px}p{margin:12px 0}ul{padding-left:24px}</style></head><body><main>${body}</main></body></html>`;
+}
 
 export function isDocsAdminSession(session: ApiSession | null): boolean {
   return session?.source === 'sub2api';
@@ -81,8 +89,10 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
     const temporary = `${output}.tmp-${process.pid}`;
     await writeFile(temporary, `---\ntitle: 飞书同步文档\n---\n\n${content.trim()}\n`, 'utf8');
     await rename(temporary, output);
+    const publicDocs = path.resolve(cwd, 'public/docs');
+    await mkdir(publicDocs, { recursive: true });
+    await writeFile(path.join(publicDocs, 'index.html'), renderFeishuHtml(content.trim()), 'utf8');
     if (options.runBuild) await options.runBuild();
-    else await execFileAsync('pnpm', ['run', 'docs:build'], { cwd });
     state = { status: 'succeeded', lastRunAt: now, message: `同步成功：${documentId}` };
   } catch (error) {
     state = { status: 'failed', lastRunAt: now, message: error instanceof Error ? error.message : '同步失败' };
