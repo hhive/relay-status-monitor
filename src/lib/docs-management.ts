@@ -247,15 +247,16 @@ function extractZipEntry(buffer: Buffer, entry: ZipEntry): Buffer {
 export async function importZipDocument(buffer: Buffer, input: { id: string; title?: string }, options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<ManagedDocument> {
   const id = safeId(input.id); const entries = parseZip(buffer); for (const entry of entries) { const normalized = path.posix.normalize(entry.name); if (normalized.startsWith('../') || path.posix.isAbsolute(normalized) || entry.name.includes('\\')) throw new Error('ZIP 包含不安全路径'); } const markdown = entries.find((entry) => !entry.name.endsWith('/') && entry.name.toLowerCase().endsWith('.md'));
   if (!markdown) throw new Error('ZIP 中未找到 Markdown 文档');
-  const root = docsRoot(options.cwd, options.env); const publicRoot = options.cwd ? path.resolve(options.cwd, 'public/docs') : '/var/lib/relay-status-monitor/docs'; const publishRoot = path.join(publicRoot, id); await mkdir(publishRoot, { recursive: true });
+  const root = docsRoot(options.cwd, options.env); const file = fileFor(root, 'local', id); const publicRoot = options.cwd ? path.resolve(options.cwd, 'public/docs') : '/var/lib/relay-status-monitor/docs'; const publishRoot = path.join(publicRoot, id);
   // Prevent accidental overwrite of an existing local document during import.
   try { await readFile(fileFor(root, 'local', id)); throw new Error('本地文档已存在'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  await mkdir(publishRoot, { recursive: true });
   const names = new Set(entries.map((entry) => entry.name));
   let content = extractZipEntry(buffer, markdown).toString('utf8');
   const rewrite = (value: string) => { if (/^(?:https?:|\/|#|data:)/i.test(value)) return value; const normalized = path.posix.normalize(path.posix.join(path.posix.dirname(markdown.name), value)); if (normalized.startsWith('../') || !names.has(normalized)) return value; return `/docs/${encodeURIComponent(id)}/${normalized.split('/').map(encodeURIComponent).join('/')}`; };
   content = content.replace(/(!?\[[^\]]*\]\()([^\s)]+)(\))/g, (_, prefix, target, suffix) => `${prefix}${rewrite(target)}${suffix}`);
   for (const entry of entries) { if (entry.name.endsWith('/') || entry.name === markdown.name) continue; const normalized = path.posix.normalize(entry.name); const target = path.join(publishRoot, ...normalized.split('/')); await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, extractZipEntry(buffer, entry)); }
-  const file = fileFor(root, 'local', id); await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, `---\ntitle: ${(input.title ?? id).trim() || id}\n---\n\n${content.trim()}\n`, 'utf8'); await writeFile(path.join(publishRoot, 'index.html'), renderFeishuHtml(content.trim()), 'utf8'); return readDocument(file, id, 'local');
+  await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, `---\ntitle: ${(input.title ?? id).trim() || id}\n---\n\n${content.trim()}\n`, 'utf8'); await writeFile(path.join(publishRoot, 'index.html'), renderFeishuHtml(content.trim()), 'utf8'); return readDocument(file, id, 'local');
 }
 async function readDocument(file: string, id: string, source: ManagedDocumentSource): Promise<ManagedDocument> {
   const [raw, metadata] = await Promise.all([readFile(file, 'utf8'), stat(file)]);
