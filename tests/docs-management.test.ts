@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { deflateRawSync } from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
-import { createLocalDocument, deleteLocalDocument, isDocsAdminSession, listManagedDocuments, requestDocsSync, resetDocsSyncState, syncFeishuDocs, updateLocalDocument } from '../src/lib/docs-management';
+import { createLocalDocument, deleteLocalDocument, importZipDocument, isDocsAdminSession, listManagedDocuments, requestDocsSync, resetDocsSyncState, syncFeishuDocs, updateLocalDocument } from '../src/lib/docs-management';
 import { isPublicDocsPath } from '../src/middleware';
 
 test('public docs paths exclude the SSO-protected management route', () => {
@@ -126,4 +127,32 @@ test('local documents have independent CRUD and are listed separately from Feish
   assert.equal((await listManagedDocuments({ cwd, env })).length, 1);
   await deleteLocalDocument('intro', { cwd, env });
   assert.equal((await listManagedDocuments({ cwd, env })).length, 0);
+});
+
+function makeZip(entries: Array<[string, Buffer]>): Buffer {
+  const locals: Buffer[] = []; const centrals: Buffer[] = []; let offset = 0;
+  for (const [name, data] of entries) {
+    const nameBuf = Buffer.from(name); const compressed = deflateRawSync(data);
+    const local = Buffer.alloc(30 + nameBuf.length + compressed.length); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(8, 8); local.writeUInt32LE(0, 10); local.writeUInt32LE(0, 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(compressed.length, 22); local.writeUInt16LE(nameBuf.length, 26); nameBuf.copy(local, 30); compressed.copy(local, 30 + nameBuf.length); locals.push(local);
+    const central = Buffer.alloc(46 + nameBuf.length); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(8, 10); central.writeUInt32LE(0, 16); central.writeUInt32LE(compressed.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(nameBuf.length, 28); nameBuf.copy(central, 46); central.writeUInt32LE(offset, 42); centrals.push(central); offset += local.length;
+  }
+  const body = Buffer.concat([...locals, ...centrals]); const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(entries.length, 8); eocd.writeUInt16LE(entries.length, 10); eocd.writeUInt32LE(Buffer.concat(centrals).length, 12); eocd.writeUInt32LE(offset, 16); return Buffer.concat([body, eocd]);
+}
+
+test('importZipDocument publishes markdown and rewrites relative assets', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-zip-')); const zip = makeZip([['guide.md', Buffer.from('# Guide\n\n![shot](assets/shot.png)\n\n[download](files/app.bin)')], ['assets/shot.png', Buffer.from([1, 2, 3])], ['files/app.bin', Buffer.from([4, 5])]]);
+  const doc = await importZipDocument(zip, { id: 'guide', title: 'Guide' }, { cwd, env: { DOCS_DATA_DIR: 'content' } as unknown as NodeJS.ProcessEnv });
+  assert.equal(doc.id, 'guide'); assert.match(doc.content, /\/docs\/guide\/assets\/shot\.png/); assert.match(doc.content, /\/docs\/guide\/files\/app\.bin/);
+  assert.deepEqual([...await readFile(path.join(cwd, 'public/docs/guide/assets/shot.png'))], [1, 2, 3]);
+  assert.match(await readFile(path.join(cwd, 'public/docs/guide/index.html'), 'utf8'), /<h1>Guide<\/h1>/);
+});
+
+test('importZipDocument rejects traversal entries', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-zip-safe-')); const zip = makeZip([['../escape.md', Buffer.from('# bad')]]);
+  await assert.rejects(() => importZipDocument(zip, { id: 'bad', title: '' }, { cwd }), /不安全|路径/);
+});
+
+test('importZipDocument does not overwrite an existing document', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-zip-existing-')); await createLocalDocument({ id: 'same', title: 'Old', content: '# Old' }, { cwd });
+  await assert.rejects(() => importZipDocument(makeZip([['doc.md', Buffer.from('# New')]]), { id: 'same' }, { cwd }), /已存在/);
 });

@@ -17,6 +17,8 @@ export default function DocsManagementPage() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [documents, setDocuments] = useState<Doc[]>([]);
   const [draft, setDraft] = useState({ id: '', title: '', content: '' });
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [zipStatus, setZipStatus] = useState<string | null>(null);
   const [config, setConfig] = useState({ url: '', appId: '', appSecret: '', apiBase: 'https://open.feishu.cn', output: '' });
   const [configState, setConfigState] = useState<FeishuConfig | null>(null);
   async function load() { const response = await apiFetch('/api/docs/status'); if (response.ok) setState(await response.json()); }
@@ -45,6 +47,12 @@ export default function DocsManagementPage() {
     const response = await apiFetch(endpoint, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(draft) });
     if (response.ok) { setDraft({ id: '', title: '', content: '' }); await loadDocuments(); }
   }
+  async function importZip() {
+    if (!zipFile || !draft.id) { setZipStatus('请先填写文档标识并选择 ZIP 文件'); return; }
+    setZipStatus('正在导入…'); const form = new FormData(); form.set('id', draft.id); form.set('title', draft.title); form.set('file', zipFile);
+    const response = await apiFetch('/api/docs/documents', { method: 'POST', body: form }); const body = await response.json().catch(() => ({})) as { error?: string };
+    if (!response.ok) { setZipStatus(body.error ?? '导入失败'); return; } setZipStatus('导入成功'); setZipFile(null); setDraft({ id: '', title: '', content: '' }); await loadDocuments();
+  }
   async function removeDocument(id: string) { if ((await apiFetch(`/api/docs/documents/${encodeURIComponent(id)}`, { method: 'DELETE' })).ok) await loadDocuments(); }
   return (
     <div className="space-y-6">
@@ -64,6 +72,7 @@ export default function DocsManagementPage() {
       <Card><CardHeader><CardTitle>本地文档</CardTitle></CardHeader><CardContent className="space-y-3">
         <div className="grid gap-2 md:grid-cols-3"><input className="rounded border px-2 py-1 text-sm" placeholder="文档标识" value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} disabled={documents.some((doc) => doc.id === draft.id && doc.source === 'local')} /><input className="rounded border px-2 py-1 text-sm" placeholder="标题" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /><Button size="sm" onClick={saveDocument}><Save />保存</Button></div>
         <textarea className="min-h-40 w-full rounded border p-2 font-mono text-sm" placeholder="Markdown 内容" value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} />
+        <div className="flex flex-wrap items-center gap-2 border-t pt-3"><input type="file" accept=".zip,application/zip" onChange={(e) => setZipFile(e.target.files?.[0] ?? null)} /><Button size="sm" variant="outline" onClick={importZip}>导入 ZIP 文档</Button>{zipStatus && <span className="text-sm text-muted-foreground">{zipStatus}</span>}</div>
         <div className="divide-y rounded border">{documents.map((doc) => <div key={`${doc.source}-${doc.id}`} className="flex items-center justify-between gap-2 p-2 text-sm"><button className="text-left hover:underline" onClick={() => doc.source === 'local' && setDraft({ id: doc.id, title: doc.title, content: doc.content })}>{doc.title} <span className="text-xs text-muted-foreground">({doc.source === 'feishu' ? '飞书' : '本地'})</span></button>{doc.source === 'local' && <Button variant="ghost" size="icon" onClick={() => removeDocument(doc.id)} aria-label="删除"><Trash2 /></Button>}</div>)}</div>
       </CardContent></Card>
     </div>

@@ -1,5 +1,6 @@
 import type { ApiSession } from '@/lib/auth';
 import { mkdir, rename, writeFile, readdir, readFile, unlink, stat } from 'node:fs/promises';
+import { inflateRawSync } from 'node:zlib';
 import path from 'node:path';
 import { getSetting, setSetting, FeishuSettingKeys } from '@/lib/settings';
 
@@ -217,6 +218,44 @@ function parseDocument(id: string, source: ManagedDocumentSource, raw: string, u
 }
 function fileFor(root: string, source: ManagedDocumentSource, id: string): string {
   return path.join(root, source === 'local' ? 'local' : '', `${safeId(id)}.md`);
+}
+
+type ZipEntry = { name: string; method: number; compressedSize: number; size: number; offset: number };
+function parseZip(buffer: Buffer): ZipEntry[] {
+  const eocd = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (eocd < 0 || eocd + 22 > buffer.length) throw new Error('ZIP 文件格式无效');
+  const count = buffer.readUInt16LE(eocd + 10); const centralSize = buffer.readUInt32LE(eocd + 12); const centralOffset = buffer.readUInt32LE(eocd + 16);
+  if (centralOffset + centralSize > buffer.length) throw new Error('ZIP 中央目录无效');
+  if (count > 1000) throw new Error('ZIP 条目数量过多');
+  const entries: ZipEntry[] = []; let cursor = centralOffset; let totalSize = 0;
+  for (let i = 0; i < count; i++) {
+    if (buffer.readUInt32LE(cursor) !== 0x02014b50) throw new Error('ZIP 条目无效');
+    const method = buffer.readUInt16LE(cursor + 10); const compressedSize = buffer.readUInt32LE(cursor + 20); const size = buffer.readUInt32LE(cursor + 24); const nameLen = buffer.readUInt16LE(cursor + 28); const extraLen = buffer.readUInt16LE(cursor + 30); const commentLen = buffer.readUInt16LE(cursor + 32); const offset = buffer.readUInt32LE(cursor + 42); const name = buffer.subarray(cursor + 46, cursor + 46 + nameLen).toString('utf8');
+    entries.push({ name, method, compressedSize, size, offset }); cursor += 46 + nameLen + extraLen + commentLen;
+    totalSize += size; if (totalSize > 100 * 1024 * 1024) throw new Error('ZIP 解压后文件总大小不能超过 100MB');
+  }
+  return entries;
+}
+function extractZipEntry(buffer: Buffer, entry: ZipEntry): Buffer {
+  if (entry.name.endsWith('/')) return Buffer.alloc(0);
+  if (buffer.readUInt32LE(entry.offset) !== 0x04034b50) throw new Error('ZIP 本地条目无效');
+  const nameLen = buffer.readUInt16LE(entry.offset + 26); const extraLen = buffer.readUInt16LE(entry.offset + 28); const start = entry.offset + 30 + nameLen + extraLen; const compressed = buffer.subarray(start, start + entry.compressedSize);
+  if (entry.method === 0) return Buffer.from(compressed);
+  if (entry.method === 8) return inflateRawSync(compressed);
+  throw new Error(`不支持的 ZIP 压缩方式：${entry.method}`);
+}
+export async function importZipDocument(buffer: Buffer, input: { id: string; title?: string }, options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<ManagedDocument> {
+  const id = safeId(input.id); const entries = parseZip(buffer); for (const entry of entries) { const normalized = path.posix.normalize(entry.name); if (normalized.startsWith('../') || path.posix.isAbsolute(normalized) || entry.name.includes('\\')) throw new Error('ZIP 包含不安全路径'); } const markdown = entries.find((entry) => !entry.name.endsWith('/') && entry.name.toLowerCase().endsWith('.md'));
+  if (!markdown) throw new Error('ZIP 中未找到 Markdown 文档');
+  const root = docsRoot(options.cwd, options.env); const publicRoot = options.cwd ? path.resolve(options.cwd, 'public/docs') : '/var/lib/relay-status-monitor/docs'; const publishRoot = path.join(publicRoot, id); await mkdir(publishRoot, { recursive: true });
+  // Prevent accidental overwrite of an existing local document during import.
+  try { await readFile(fileFor(root, 'local', id)); throw new Error('本地文档已存在'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const names = new Set(entries.map((entry) => entry.name));
+  let content = extractZipEntry(buffer, markdown).toString('utf8');
+  const rewrite = (value: string) => { if (/^(?:https?:|\/|#|data:)/i.test(value)) return value; const normalized = path.posix.normalize(path.posix.join(path.posix.dirname(markdown.name), value)); if (normalized.startsWith('../') || !names.has(normalized)) return value; return `/docs/${encodeURIComponent(id)}/${normalized.split('/').map(encodeURIComponent).join('/')}`; };
+  content = content.replace(/(!?\[[^\]]*\]\()([^\s)]+)(\))/g, (_, prefix, target, suffix) => `${prefix}${rewrite(target)}${suffix}`);
+  for (const entry of entries) { if (entry.name.endsWith('/') || entry.name === markdown.name) continue; const normalized = path.posix.normalize(entry.name); const target = path.join(publishRoot, ...normalized.split('/')); await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, extractZipEntry(buffer, entry)); }
+  const file = fileFor(root, 'local', id); await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, `---\ntitle: ${(input.title ?? id).trim() || id}\n---\n\n${content.trim()}\n`, 'utf8'); await writeFile(path.join(publishRoot, 'index.html'), renderFeishuHtml(content.trim()), 'utf8'); return readDocument(file, id, 'local');
 }
 async function readDocument(file: string, id: string, source: ManagedDocumentSource): Promise<ManagedDocument> {
   const [raw, metadata] = await Promise.all([readFile(file, 'utf8'), stat(file)]);
