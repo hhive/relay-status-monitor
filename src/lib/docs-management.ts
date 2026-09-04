@@ -9,7 +9,16 @@ export interface DocsSyncState { status: DocsSyncStatus; lastRunAt: string | nul
 let state: DocsSyncState = { status: 'idle', lastRunAt: null, message: '尚未执行同步' };
 function renderFeishuHtml(markdown: string): string {
   const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const inline = (value: string) => escape(value).replace(/https:\/\/[^\s<]+/g, (url) => `<a href="${url}" rel="noreferrer">${url}</a>`);
+  const inline = (value: string) => {
+    const links: string[] = [];
+    const withPlaceholders = value.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label: string, url: string) => {
+      const index = links.push(`<a href="${escape(url)}" rel="noreferrer">${escape(label)}</a>`) - 1;
+      return `@@FEISHU_LINK_${index}@@`;
+    });
+    return escape(withPlaceholders)
+      .replace(/https:\/\/[^\s<]+/g, (url) => `<a href="${url}" rel="noreferrer">${url}</a>`)
+      .replace(/@@FEISHU_LINK_(\d+)@@/g, (_, index: string) => links[Number(index)] ?? '');
+  };
   const body = markdown.split(/\r?\n/).map((line) => {
     const image = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
     if (image) return `<figure><img src="${escape(image[2])}" alt="${escape(image[1])}" loading="lazy"></figure>`;
@@ -19,10 +28,10 @@ function renderFeishuHtml(markdown: string): string {
     if (/^[-*] /.test(line)) return `<li>${escape(line.slice(2))}</li>`;
     return line.trim() ? `<p>${inline(line)}</p>` : '';
   }).join('\n').replace(/(<li>.*<\/li>\n?)+/g, (items) => `<ul>${items}</ul>`);
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>飞书同步文档</title><style>body{margin:0;background:#f8fafc;color:#1f2937;font:16px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:860px;margin:0 auto;padding:48px 24px 80px;background:#fff;min-height:100vh;box-sizing:border-box}h1{font-size:32px;line-height:1.25;margin:0 0 28px;border-bottom:1px solid #e5e7eb;padding-bottom:18px}h2{font-size:24px;margin-top:32px}h3{font-size:19px;margin-top:24px}p{margin:12px 0}ul{padding-left:24px}a{color:#2563eb;text-decoration:none}a:hover{text-decoration:underline}figure{margin:20px 0}img{display:block;max-width:100%;height:auto;border:1px solid #e5e7eb}</style></head><body><main>${body}</main></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>飞书同步文档</title><style>body{margin:0;background:#f8fafc;color:#1f2937;font:16px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:860px;margin:0 auto;padding:48px 24px 80px;background:#fff;min-height:100vh;box-sizing:border-box}h1{font-size:32px;line-height:1.25;margin:0 0 28px;border-bottom:1px solid #e5e7eb;padding-bottom:18px}h2{font-size:24px;margin-top:32px}h3{font-size:19px;margin-top:24px}p{margin:12px 0}ul{padding-left:24px}a{color:#2563eb;text-decoration:none}a:hover{text-decoration:underline}figure{margin:20px 0}img{display:block;width:70%;max-width:70%;height:auto;border:1px solid #e5e7eb}@media (max-width:640px){img{width:100%;max-width:100%;}}</style></head><body><main>${body}</main></body></html>`;
 }
 
-type FeishuTextElement = { text_run?: { content?: string } };
+type FeishuTextElement = { text_run?: { content?: string; text_element_style?: { link?: { url?: string } } } };
 type FeishuTextBlock = { elements?: FeishuTextElement[] };
 type FeishuBlock = {
   block_id?: string;
@@ -38,7 +47,11 @@ type FeishuBlock = {
 };
 
 function textElements(payload?: FeishuTextBlock): string {
-  return payload?.elements?.map((element) => element.text_run?.content ?? '').join('') ?? '';
+  return payload?.elements?.map((element) => {
+    const text = element.text_run?.content ?? '';
+    const url = element.text_run?.text_element_style?.link?.url;
+    return url && /^https?:\/\//.test(url) ? `[${text}](${url})` : text;
+  }).join('') ?? '';
 }
 
 function blocksToMarkdown(items: FeishuBlock[]): string {

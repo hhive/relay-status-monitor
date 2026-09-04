@@ -87,7 +87,25 @@ test('syncFeishuDocs prefers structured Docx blocks for headings, links, and ima
   assert.match(html, /结构化标题/);
   assert.match(html, /https:\/\/example\.com/);
   assert.match(html, /<img src="\/docs\/assets\/feishu\/image-token\.png"/);
+  assert.match(html, /img\{display:block;width:70%;max-width:70%;/);
+  assert.match(html, /@media \(max-width:640px\)\{img\{width:100%;max-width:100%;\}\}/);
   assert.deepEqual([...await readFile(path.join(cwd, 'public/docs/assets/feishu/image-token.png'))], [1, 2, 3]);
+});
+
+test('syncFeishuDocs preserves Docx rich-text document links', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-links-'));
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('tenant_access_token')) return new Response(JSON.stringify({ tenant_access_token: 'token' }));
+    if (url.includes('/blocks')) return new Response(JSON.stringify({ data: { items: [
+      { block_type: 2, text: { elements: [{ text_run: { content: '查看文档', text_element_style: { link: { url: 'https://example.feishu.cn/docx/linked-doc' } } } }] } },
+    ] } }));
+    return new Response(JSON.stringify({ data: { content: 'fallback' } }));
+  }) as typeof fetch;
+  const result = await syncFeishuDocs({ cwd, env: { FEISHU_DOC_URL: 'https://example.feishu.cn/docx/abc', FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret' } as unknown as NodeJS.ProcessEnv, fetchImpl, runBuild: async () => {} });
+  assert.equal(result.status, 'succeeded');
+  const html = await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8');
+  assert.match(html, /<a href="https:\/\/example\.feishu\.cn\/docx\/linked-doc" rel="noreferrer">查看文档<\/a>/);
 });
 
 test('syncFeishuDocs reports missing configuration without network calls', async () => {
