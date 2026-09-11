@@ -24,11 +24,11 @@ const gitignoreRules = readFileSync(path.join(projectRoot, ".gitignore"), "utf8"
   .filter((line) => line.length > 0 && !line.startsWith("#"));
 
 test("pins the supported Next.js dependency baseline", () => {
-  assert.equal(packageJson.dependencies.next, "15.5.21");
-  assert.equal(packageJson.devDependencies["eslint-config-next"], "15.5.21");
+  assert.equal(packageJson.dependencies.next, "15.5.24");
+  assert.equal(packageJson.devDependencies["eslint-config-next"], "15.5.24");
   assert.match(packageJson.dependencies.react, /^\^18(?:\.|$)/);
   assert.match(packageJson.dependencies["react-dom"], /^\^18(?:\.|$)/);
-  assert.equal(packageJson.pnpm?.overrides?.sharp, "0.35.3");
+  assert.equal(packageJson.pnpm?.overrides?.sharp, "0.35.4");
   assert.equal(packageJson.pnpm?.overrides?.postcss, "8.5.26");
   assert.equal(packageJson.pnpm?.overrides?.nanoid, "3.3.18");
   assert.equal(packageJson.pnpm?.overrides?.["deepmerge-ts"], "8.0.1");
