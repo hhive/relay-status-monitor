@@ -11,6 +11,55 @@ export interface DocsSyncState { status: DocsSyncStatus; lastRunAt: string | nul
 
 let state: DocsSyncState = { status: 'idle', lastRunAt: null, message: '尚未执行同步' };
 
+const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+const MAX_BLOCK_PAGES = 20;
+const ATTACHMENT_LINK_PATTERN = /\[([^\]]*)\]\(@@FEISHU_FILE:([A-Za-z0-9_-]+):([^@]*)@@\)/g;
+/** Mirrors the sanitiser in `docs-feishu`, so the placeholder name can never escape the target directory. */
+const ATTACHMENT_NAME_PATTERN = /^[A-Za-z0-9._㐀-鿿-]+$/;
+
+/**
+ * Feishu file blocks are mirrored next to the page so readers can download them
+ * without a Feishu account. A download that fails degrades to the bare file name
+ * instead of leaving a broken link behind.
+ */
+async function downloadFeishuAttachments(markdown: string, base: string, accessToken: string, publicDocs: string, fetchImpl: typeof fetch): Promise<string> {
+  let result = markdown;
+  for (const match of [...markdown.matchAll(ATTACHMENT_LINK_PATTERN)]) {
+    const [link, label, token, name] = match;
+    const text = label || '附件';
+    const unwrap = () => { result = result.replaceAll(link, () => text); };
+    if (!name || !ATTACHMENT_NAME_PATTERN.test(name) || name.length > 200) { unwrap(); continue; }
+    const response = await fetchImpl(`${base}/open-apis/drive/v1/medias/${encodeURIComponent(token)}/download`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) { unwrap(); continue; }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > MAX_ATTACHMENT_BYTES) { unwrap(); continue; }
+    const relative = `assets/feishu/files/${token}-${name}`;
+    const target = path.join(publicDocs, relative);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, buffer);
+    result = result.replaceAll(link, () => `[${text}](/docs/${relative})`);
+  }
+  return result;
+}
+
+/** The blocks endpoint is paginated; reading only the first page silently truncates long documents. */
+async function fetchDocumentBlocks(base: string, documentId: string, accessToken: string, fetchImpl: typeof fetch): Promise<FeishuBlock[]> {
+  const items: FeishuBlock[] = [];
+  let pageToken = '';
+  for (let page = 0; page < MAX_BLOCK_PAGES; page += 1) {
+    const query = `page_size=500${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
+    const response = await fetchImpl(`${base}/open-apis/docx/v1/documents/${encodeURIComponent(documentId)}/blocks?${query}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) break;
+    const payload = await response.json() as { data?: { items?: FeishuBlock[]; has_more?: boolean; page_token?: string } };
+    items.push(...(payload.data?.items ?? []));
+    if (payload.data?.has_more !== true) break;
+    const next = payload.data?.page_token ?? '';
+    if (!next || next === pageToken) break;
+    pageToken = next;
+  }
+  return items;
+}
+
 async function downloadFeishuAssets(markdown: string, base: string, accessToken: string, publicDocs: string, fetchImpl: typeof fetch): Promise<string> {
   const tokens = [...markdown.matchAll(/@@FEISHU_ASSET:([A-Za-z0-9_-]+)@@/g)].map((match) => match[1]);
   let result = markdown;
@@ -91,16 +140,16 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
     if (!contentResponse.ok) throw new Error(`飞书文档读取失败（HTTP ${contentResponse.status}）`);
     const payload = await contentResponse.json() as { data?: { content?: string }; content?: string; msg?: string };
     let content = payload.data?.content ?? payload.content;
-    const blocksResponse = await fetchImpl(`${base}/open-apis/docx/v1/documents/${encodeURIComponent(documentId)}/blocks?page_size=500`, { headers: { Authorization: `Bearer ${tokenPayload.tenant_access_token}` } });
-    if (blocksResponse.ok) {
-      const blocksPayload = await blocksResponse.json() as { data?: { items?: FeishuBlock[] } };
-      const structured = blocksToMarkdown(blocksPayload.data?.items ?? []);
+    const blocks = await fetchDocumentBlocks(base, documentId, tokenPayload.tenant_access_token, fetchImpl);
+    if (blocks.length) {
+      const structured = blocksToMarkdown(blocks);
       if (structured.trim()) content = structured;
     }
     if (typeof content !== 'string') throw new Error(`飞书文档读取失败：${payload.msg ?? '响应缺少正文'}`);
     const cwd = options.cwd ?? process.cwd();
     const publicDocs = options.cwd ? path.resolve(cwd, 'public/docs') : '/var/lib/relay-status-monitor/docs';
     await mkdir(publicDocs, { recursive: true });
+    content = await downloadFeishuAttachments(content, base, tokenPayload.tenant_access_token, publicDocs, fetchImpl);
     content = await downloadFeishuAssets(content, base, tokenPayload.tenant_access_token, publicDocs, fetchImpl);
     const defaultOutput = options.cwd ? path.join(env.DOCS_DATA_DIR ?? 'docs-site', 'feishu.md') : '/var/lib/relay-status-monitor/feishu.md';
     const output = path.resolve(cwd, stored?.output || env.FEISHU_DOC_OUTPUT || defaultOutput);

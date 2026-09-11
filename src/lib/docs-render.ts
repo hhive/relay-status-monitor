@@ -96,21 +96,12 @@ export function deriveDocumentTitle(source: string, fallback: string): string {
   return fallback;
 }
 
-const SITE_NAV: Array<{ text: string; href: string }> = [
-  { text: '指南', href: '/docs/guide/overview.html' },
-  { text: 'API', href: '/docs/api/overview.html' },
-  { text: '部署', href: '/docs/ops/deployment.html' },
-];
-
 const LAYOUT_CSS = [
   '*{box-sizing:border-box}',
   'body{background:var(--vp-c-bg,#fff)}',
   '.doc-shell{display:flex;align-items:flex-start;max-width:1440px;margin:0 auto}',
   '.doc-sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;flex:0 0 268px;width:268px;padding:24px 16px 40px;border-right:1px solid var(--vp-c-divider,#e5e7eb)}',
   '.doc-brand{font-weight:600;font-size:15px;padding:0 8px 12px;color:var(--vp-c-text-1,#1f2937);word-break:break-word}',
-  '.doc-sitenav{display:flex;flex-wrap:wrap;gap:8px;padding:0 8px 16px;margin-bottom:12px;border-bottom:1px solid var(--vp-c-divider,#e5e7eb)}',
-  '.doc-sitenav a{font-size:13px;padding:2px 9px;border-radius:12px;background:var(--vp-c-bg-soft,#f2f3f5);color:var(--vp-c-text-2,#4b5563);text-decoration:none}',
-  '.doc-sitenav a:hover{color:var(--vp-c-brand-1,#3451b2)}',
   '.doc-outline{display:flex;flex-direction:column;font-size:13px;line-height:1.5}',
   '.doc-outline a{display:block;padding:5px 8px;border-radius:6px;color:var(--vp-c-text-2,#4b5563);text-decoration:none;border-left:2px solid transparent}',
   '.doc-outline a:hover{color:var(--vp-c-brand-1,#3451b2);background:var(--vp-c-bg-soft,#f2f3f5)}',
@@ -225,7 +216,6 @@ export async function renderDocsPage(options: RenderDocsPageOptions): Promise<st
   const outlineNav = renderOutline(outline);
   const sidebar = outlineNav
     ? `<aside class="doc-sidebar"><div class="doc-brand">${title}</div>`
-      + `<nav class="doc-sitenav">${SITE_NAV.map((item) => `<a href="${item.href}">${item.text}</a>`).join('')}</nav>`
       + `${outlineNav}`
       + `<div class="doc-sidebar-footer"><button type="button" class="doc-theme-toggle">切换主题</button></div></aside>`
     : '';

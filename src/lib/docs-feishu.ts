@@ -7,14 +7,25 @@
  * the page root and fall back to the flat order when the tree is unavailable.
  */
 
+/** Inline reference to another Feishu document ("引用文档"). */
+export interface FeishuMentionDoc {
+  token?: string;
+  title?: string;
+  url?: string;
+}
 export interface FeishuTextStyle {
   bold?: boolean;
   italic?: boolean;
   strikethrough?: boolean;
   inline_code?: boolean;
   link?: { url?: string };
+  /** Feishu has shipped the mention under the style at least once; accept both shapes. */
+  mention_doc?: FeishuMentionDoc;
 }
-export type FeishuTextElement = { text_run?: { content?: string; text_element_style?: FeishuTextStyle } };
+export type FeishuTextElement = {
+  text_run?: { content?: string; text_element_style?: FeishuTextStyle };
+  mention_doc?: FeishuMentionDoc;
+};
 export type FeishuTextBlock = { elements?: FeishuTextElement[] };
 
 export interface FeishuBlock {
@@ -40,6 +51,7 @@ export interface FeishuBlock {
   callout?: FeishuTextBlock;
   table?: { property?: { row_size?: number; column_size?: number }; cells?: string[] };
   image?: { token?: string };
+  file?: { token?: string; name?: string };
 }
 
 const BLOCK_PAGE = 1;
@@ -52,11 +64,14 @@ const BLOCK_QUOTE = 15;
 const BLOCK_TODO = 17;
 const BLOCK_CALLOUT = 19;
 const BLOCK_DIVIDER = 22;
+const BLOCK_FILE = 23;
 const BLOCK_IMAGE = 27;
 const BLOCK_TABLE = 31;
 const BLOCK_TABLE_CELL = 32;
 const MAX_HEADING = 6;
 const INDENT = '  ';
+const MAX_ATTACHMENT_NAME = 120;
+const ATTACHMENT_TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 type WalkFn = (ids: string[] | undefined, depth: number, counters: number[]) => void;
 
@@ -70,6 +85,8 @@ function wrap(value: string, marker: string): string {
 
 function textElements(payload?: FeishuTextBlock): string {
   return payload?.elements?.map((element) => {
+    const mention = element.mention_doc;
+    if (mention) return mentionDoc(mention);
     const run = element.text_run;
     const style = run?.text_element_style;
     let content = run?.content ?? '';
@@ -85,8 +102,39 @@ function textElements(payload?: FeishuTextBlock): string {
     }
     if (style?.strikethrough) content = wrap(content, '~~');
     const url = style?.link?.url;
-    return url && /^https?:\/\//.test(url) ? `[${content}](${url})` : content;
+    if (url && /^https?:\/\//.test(url)) return `[${content}](${url})`;
+    // Some responses carry the referenced document on the run style instead of the element.
+    const styled = style?.mention_doc;
+    if (styled && /^https?:\/\//.test(styled.url ?? '')) {
+      return `[${content || styled.title?.trim() || ''}](${styled.url})`;
+    }
+    return content;
   }).join('') ?? '';
+}
+
+/** Referenced documents link out to Feishu; without a URL only the title survives. */
+function mentionDoc(mention: FeishuMentionDoc): string {
+  const title = mention.title?.trim() ?? '';
+  const url = mention.url?.trim() ?? '';
+  if (title && /^https?:\/\//.test(url)) return `[${title}](${url})`;
+  return title || url;
+}
+
+/**
+ * Filesystem- and URL-safe attachment name. CJK is kept because it survives a
+ * percent-encoded round trip; everything else outside `[A-Za-z0-9._-]` collapses
+ * to `-`, which also removes any path separators or markdown delimiters.
+ */
+export function attachmentFileName(name: string | undefined): string {
+  const cleaned = (name ?? '')
+    .normalize('NFC')
+    .replace(/[^A-Za-z0-9._㐀-鿿-]/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/-\./g, '.')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^[-.]+/, '')
+    .trim();
+  return cleaned.slice(0, MAX_ATTACHMENT_NAME) || 'attachment';
 }
 
 function blockText(block: FeishuBlock): string {
@@ -169,6 +217,17 @@ export function blocksToMarkdown(items: FeishuBlock[]): string {
     }
     if (type === BLOCK_IMAGE) {
       lines.push(`![飞书图片](@@FEISHU_ASSET:${block.image?.token ?? block.block_id}@@)`);
+      return;
+    }
+    if (type === BLOCK_FILE) {
+      const token = (block.file?.token ?? '').trim();
+      const name = block.file?.name?.trim() ?? '';
+      // Without a usable token the file cannot be mirrored, but its name still has to survive.
+      if (!token || !ATTACHMENT_TOKEN_PATTERN.test(token)) {
+        if (name) lines.push(name);
+        return;
+      }
+      lines.push(`[${name || '附件'}](@@FEISHU_FILE:${token}:${attachmentFileName(name)}@@)`);
       return;
     }
     if (type === BLOCK_TABLE) {

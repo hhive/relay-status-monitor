@@ -98,3 +98,45 @@ test('blocksToMarkdown ignores blocks that are not reachable from the page root'
   ]);
   assert.equal(markdown, '可见');
 });
+
+test('blocksToMarkdown renders file attachments as download placeholders', () => {
+  const markdown = blocksToMarkdown([
+    page(['f1', 'f2']),
+    { block_id: 'f1', block_type: 23, file: { token: 'file-token', name: 'CC-Switch v3.20.1 (Windows).msi' } },
+    { block_id: 'f2', block_type: 23, file: { token: 'cjk-token', name: '安装包 v2.zip' } },
+  ]);
+  assert.equal(markdown, [
+    '[CC-Switch v3.20.1 (Windows).msi](@@FEISHU_FILE:file-token:CC-Switch-v3.20.1-Windows.msi@@)',
+    '[安装包 v2.zip](@@FEISHU_FILE:cjk-token:安装包-v2.zip@@)',
+  ].join('\n\n'));
+});
+
+test('blocksToMarkdown keeps a file name when the attachment token is unusable', () => {
+  const markdown = blocksToMarkdown([
+    page(['f1']),
+    { block_id: 'f1', block_type: 23, file: { name: '无 token 的附件.pdf' } },
+  ]);
+  assert.equal(markdown, '无 token 的附件.pdf');
+});
+
+test('blocksToMarkdown keeps inline referenced documents as links', () => {
+  const markdown = blocksToMarkdown([
+    page(['p1', 'p2', 'p3']),
+    { block_id: 'p1', block_type: 2, text: { elements: [
+      { text_run: { content: '参考：' } },
+      { mention_doc: { token: 'doc-token', title: 'Claude code配置', url: 'https://example.feishu.cn/docx/doc-token' } },
+    ] } },
+    { block_id: 'p2', block_type: 2, text: { elements: [
+      { text_run: { content: '另一篇：' } },
+      { text_run: { content: '模型选型', text_element_style: { mention_doc: { token: 't2', title: '模型选型', url: 'https://example.feishu.cn/docx/t2' } } } },
+    ] } },
+    { block_id: 'p3', block_type: 2, text: { elements: [
+      { mention_doc: { token: 't3', title: '无链接引用' } },
+    ] } },
+  ]);
+  assert.equal(markdown, [
+    '参考：[Claude code配置](https://example.feishu.cn/docx/doc-token)',
+    '另一篇：[模型选型](https://example.feishu.cn/docx/t2)',
+    '无链接引用',
+  ].join('\n\n'));
+});

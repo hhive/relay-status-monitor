@@ -75,9 +75,9 @@ test('renderDocsPage builds a sidebar shell that reuses the VitePress stylesheet
   assert.match(page, /<article class="vp-doc">/);
   assert.match(page, /class="doc-sidebar"/);
   assert.match(page, /<nav class="doc-outline"/);
-  assert.match(page, /href="\/docs\/guide\/overview\.html"/);
-  assert.match(page, /href="\/docs\/api\/overview\.html"/);
-  assert.match(page, /href="\/docs\/ops\/deployment\.html"/);
+  // The VitePress guide/API/deployment entries carry no synced content and were removed.
+  assert.doesNotMatch(page, /doc-sitenav/);
+  assert.doesNotMatch(page, /\/docs\/(guide|api|ops)\//);
   assert.match(page, /class="doc-lightbox"/);
   assert.match(page, /class="doc-theme-toggle"/);
   assert.match(page, /<a href="#[^"]+"/);

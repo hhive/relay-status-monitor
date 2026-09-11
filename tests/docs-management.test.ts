@@ -159,3 +159,68 @@ test('importZipDocument does not overwrite an existing document', async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-zip-existing-')); await createLocalDocument({ id: 'same', title: 'Old', content: '# Old' }, { cwd });
   await assert.rejects(() => importZipDocument(makeZip([['doc.md', Buffer.from('# New')]]), { id: 'same' }, { cwd }), /已存在/);
 });
+
+test('syncFeishuDocs mirrors file attachments and links them from the page', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-files-'));
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('tenant_access_token')) return new Response(JSON.stringify({ tenant_access_token: 'token' }));
+    if (url.includes('/blocks')) return new Response(JSON.stringify({ data: { items: [
+      { block_type: 23, block_id: 'f1', file: { token: 'file-token', name: 'CC-Switch v3.20.1 (Windows).msi' } },
+    ] } }));
+    if (url.includes('/medias/file-token/download')) return new Response(new Uint8Array([9, 8, 7]), { headers: { 'content-type': 'application/octet-stream' } });
+    return new Response(JSON.stringify({ data: { content: 'fallback' } }));
+  }) as typeof fetch;
+  const result = await syncFeishuDocs({ cwd, env: { FEISHU_DOC_URL: 'https://example.feishu.cn/docx/abc', FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret' } as unknown as NodeJS.ProcessEnv, fetchImpl, runBuild: async () => {} });
+  assert.equal(result.status, 'succeeded');
+  const html = await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8');
+  assert.match(html, /<a href="\/docs\/assets\/feishu\/files\/file-token-CC-Switch-v3\.20\.1-Windows\.msi">CC-Switch v3\.20\.1 \(Windows\)\.msi<\/a>/);
+  const stored = await readFile(path.join(cwd, 'public/docs/assets/feishu/files/file-token-CC-Switch-v3.20.1-Windows.msi'));
+  assert.deepEqual([...stored], [9, 8, 7]);
+});
+
+test('syncFeishuDocs keeps the attachment name when the file download fails', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-files-fail-'));
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('tenant_access_token')) return new Response(JSON.stringify({ tenant_access_token: 'token' }));
+    if (url.includes('/blocks')) return new Response(JSON.stringify({ data: { items: [
+      { block_type: 23, block_id: 'f1', file: { token: 'file-token', name: 'CC-Switch v3.20.1 (Windows).msi' } },
+    ] } }));
+    if (url.includes('/medias/file-token/download')) return new Response('denied', { status: 403 });
+    return new Response(JSON.stringify({ data: { content: 'fallback' } }));
+  }) as typeof fetch;
+  const result = await syncFeishuDocs({ cwd, env: { FEISHU_DOC_URL: 'https://example.feishu.cn/docx/abc', FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret' } as unknown as NodeJS.ProcessEnv, fetchImpl, runBuild: async () => {} });
+  assert.equal(result.status, 'succeeded');
+  const html = await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8');
+  assert.match(html, /CC-Switch v3\.20\.1 \(Windows\)\.msi/);
+  assert.doesNotMatch(html, /assets\/feishu\/files\//);
+});
+
+test('syncFeishuDocs follows Docx block pagination before converting', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'monitor-docs-pages-'));
+  const seen: string[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('tenant_access_token')) return new Response(JSON.stringify({ tenant_access_token: 'token' }));
+    if (url.includes('/blocks')) {
+      seen.push(url);
+      if (url.includes('page_token=next-page')) {
+        return new Response(JSON.stringify({ data: { items: [
+          { block_type: 2, block_id: 'p2', text: { elements: [{ text_run: { content: '第二页正文' } }] } },
+        ], has_more: false } }));
+      }
+      return new Response(JSON.stringify({ data: {
+        items: [{ block_type: 2, block_id: 'p1', text: { elements: [{ text_run: { content: '第一页正文' } }] } }],
+        has_more: true,
+        page_token: 'next-page',
+      } }));
+    }
+    return new Response(JSON.stringify({ data: { content: 'fallback' } }));
+  }) as typeof fetch;
+  const result = await syncFeishuDocs({ cwd, env: { FEISHU_DOC_URL: 'https://example.feishu.cn/docx/abc', FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret' } as unknown as NodeJS.ProcessEnv, fetchImpl, runBuild: async () => {} });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(seen.length, 2);
+  const html = await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8');
+  assert.ok(html.indexOf('第一页正文') < html.indexOf('第二页正文'), 'pagination must keep document order');
+});
