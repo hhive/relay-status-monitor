@@ -8,8 +8,8 @@ export async function POST(_request: Request, context: { params: Promise<{ actio
   try {
     const config = await loadBackupConfig();
     if (action === 'test') {
-      await defaultTransport.list(config.path, config);
-      return NextResponse.json({ ok: true, message: '远程备份连接成功' });
+      const backups = await defaultTransport.list(config.path, config);
+      return NextResponse.json({ ok: true, message: '远程备份连接成功', backups: backups.length });
     }
     if (action === 'run') {
       if (!config.enabled) return NextResponse.json({ error: '远程备份未启用' }, { status: 400 });

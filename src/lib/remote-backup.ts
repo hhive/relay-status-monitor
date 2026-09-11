@@ -57,6 +57,21 @@ export function validateBackupConfig(input: Partial<RemoteBackupConfig>): Remote
   return { enabled: Boolean(input.enabled), host, port, username, password: String(input.password ?? ''), path, time, retention };
 }
 
+/**
+ * 解析 `sftp` 的 `ls -l` 输出。
+ * 客户端形态不一致：带路径参数时输出完整路径（OpenSSH 9.6 客户端会给 name 列加远程目录前缀），
+ * 先 cd 再相对列目录时输出 basename。两种形态都必须归一为 basename 后再匹配。
+ */
+export function parseSftpListing(output: string): Array<{ name: string; modifiedAt: Date }> {
+  return output
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .filter((parts) => parts.length >= 9)
+    .map((parts) => ({ parts, name: parts.slice(8).join(' ').split('/').pop() ?? '' }))
+    .filter(({ name }) => BACKUP_FILE_PATTERN.test(name))
+    .map(({ parts, name }) => ({ name, modifiedAt: parseSftpModifiedAt(parts[5], parts[6], parts[7]) }));
+}
+
 export function selectBackupDeletions(files: Array<{ name: string; modifiedAt: Date }>, retention: number): string[] {
   const matching = files.filter((f) => BACKUP_FILE_PATTERN.test(f.name));
   return matching
@@ -154,7 +169,7 @@ export const defaultTransport: BackupTransport = {
   },
   async list(remoteDir, config) {
     const output = await commandWithOutput('sshpass', ['-e', 'sftp', '-o', 'StrictHostKeyChecking=accept-new', '-P', String(config.port), `${config.username}@${config.host}`], `ls -l ${remoteDir}\n`, { ...process.env, SSHPASS: config.password });
-    return output.toString('utf8').split('\n').map((line) => line.trim().split(/\s+/)).filter((parts) => parts.length >= 9 && parts.at(-1)?.startsWith(BACKUP_PREFIX)).map((parts) => ({ name: parts.at(-1)!, modifiedAt: parseSftpModifiedAt(parts[5], parts[6], parts[7]) }));
+    return parseSftpListing(output.toString('utf8'));
   },
   async remove(remotePath, config) { await commandWithInput('sshpass', ['-e', 'sftp', '-o', 'StrictHostKeyChecking=accept-new', '-P', String(config.port), `${config.username}@${config.host}`], `rm ${remotePath}\n`, { ...process.env, SSHPASS: config.password }); },
 };

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { gunzipSync } from 'node:zlib';
-import { BACKUP_FILE_PATTERN, backupFileName, dumpDatabase, parseSftpModifiedAt, postgresCommandEnvironment, selectBackupDeletions, SUB2API_EXCLUDED_TABLE_DATA, SUB2API_RECENT_THREE_DAY_TABLES, validateBackupConfig, runRemoteBackup } from '../src/lib/remote-backup';
+import { BACKUP_FILE_PATTERN, backupFileName, dumpDatabase, parseSftpListing, parseSftpModifiedAt, postgresCommandEnvironment, selectBackupDeletions, SUB2API_EXCLUDED_TABLE_DATA, SUB2API_RECENT_THREE_DAY_TABLES, validateBackupConfig, runRemoteBackup } from '../src/lib/remote-backup';
 
 test('backup config validates safe path, time, port and retention', () => {
   const config = validateBackupConfig({ host: '10.0.0.2', username: 'backup', password: 'secret', path: '/srv/monitor', time: '03:15', port: 2222, retention: 3, enabled: true });
@@ -32,6 +32,40 @@ test('retention deletion only removes oldest matching monitor files', () => {
     { name: 'other.dump', modifiedAt: new Date('2025-01-01') },
   ];
   assert.deepEqual(selectBackupDeletions(files, 2), ['relay-monitor-sub2api-20260101000000-aaaaaaaa.sql.gz']);
+});
+
+// 现场实测的 sftp 客户端输出：带路径参数时 name 列是完整路径且 nlink 为 "?"（OpenSSH 9.6 客户端），
+// 先 cd 再相对列目录时是 basename。
+const REAL_SFTP_LISTING = [
+  'sftp> ls -l /app/ai/backups/',
+  '-rw-r--r--    ? root     root      4836541 Aug 15 08:39 /app/ai/backups/relay-monitor-sub2api-20260815083925-beb190c9.tar.gz',
+  '-rw-------    ? root     root      9112020 Aug 15 13:23 /app/ai/backups/relay-monitor-sub2api-20260815132337-ed080486.sql.gz',
+  '-rw-------    ? root     root     22571235 Aug 16 09:56 /app/ai/backups/relay-monitor-sub2api-20260816095633-c93e1a88.sql.gz',
+  '-rw-------    ? root     root     24568927 Aug 17 12:43 /app/ai/backups/relay-monitor-sub2api-20260817124323-a8a7dcef.sql.gz',
+  '-rw-------    ? root     root     31943507 Sep  1 14:00 /app/ai/backups/relay-monitor-sub2api-20260901140000-61d97795.sql.gz',
+  '-rw-------    ? root     root    243453164 Aug 15 18:27 /app/ai/backups/sub2api-full-usage-20260815T182633Z.dump',
+  '-rw-------    1 root     root     84822107 Sep  2 14:00 relay-monitor-sub2api-20260902140000-cccccccc.sql.gz',
+  'sftp> ls -l /app/ai/backups',
+].join('\n');
+
+test('sftp listing parses absolute-path and basename forms and keeps only strict backup names', () => {
+  const parsed = parseSftpListing(REAL_SFTP_LISTING);
+  assert.deepEqual(parsed.map((file) => file.name), [
+    'relay-monitor-sub2api-20260815132337-ed080486.sql.gz',
+    'relay-monitor-sub2api-20260816095633-c93e1a88.sql.gz',
+    'relay-monitor-sub2api-20260817124323-a8a7dcef.sql.gz',
+    'relay-monitor-sub2api-20260901140000-61d97795.sql.gz',
+    'relay-monitor-sub2api-20260902140000-cccccccc.sql.gz',
+  ]);
+  assert.equal(parsed[0].modifiedAt.toISOString(), '2026-08-15T13:23:00.000Z');
+  assert.equal(parsed[4].modifiedAt.toISOString(), '2026-09-02T14:00:00.000Z');
+  assert.deepEqual(parseSftpListing('sftp> ls -l /app/ai/backups\n'), []);
+});
+
+test('retention applies to the real absolute-path listing that previously matched nothing', () => {
+  assert.deepEqual(selectBackupDeletions(parseSftpListing(REAL_SFTP_LISTING), 4), [
+    'relay-monitor-sub2api-20260815132337-ed080486.sql.gz',
+  ]);
 });
 
 test('Sub2API dump scope follows the reference policy and keeps credentials out of argv', () => {
