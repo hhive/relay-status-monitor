@@ -62,14 +62,14 @@ export function validateBackupConfig(input: Partial<RemoteBackupConfig>): Remote
  * 客户端形态不一致：带路径参数时输出完整路径（OpenSSH 9.6 客户端会给 name 列加远程目录前缀），
  * 先 cd 再相对列目录时输出 basename。两种形态都必须归一为 basename 后再匹配。
  */
-export function parseSftpListing(output: string): Array<{ name: string; modifiedAt: Date }> {
+export function parseSftpListing(output: string, now = new Date()): Array<{ name: string; modifiedAt: Date }> {
   return output
     .split('\n')
     .map((line) => line.trim().split(/\s+/))
     .filter((parts) => parts.length >= 9)
     .map((parts) => ({ parts, name: parts.slice(8).join(' ').split('/').pop() ?? '' }))
     .filter(({ name }) => BACKUP_FILE_PATTERN.test(name))
-    .map(({ parts, name }) => ({ name, modifiedAt: parseSftpModifiedAt(parts[5], parts[6], parts[7]) }));
+    .map(({ parts, name }) => ({ name, modifiedAt: parseSftpModifiedAt(parts[5], parts[6], parts[7], now) }));
 }
 
 export function selectBackupDeletions(files: Array<{ name: string; modifiedAt: Date }>, retention: number): string[] {
@@ -199,7 +199,11 @@ export async function runRemoteBackup(config: RemoteBackupConfig, transport: Bac
     dir = await mkdtemp(join(tmpdir(), 'relay-monitor-backup-')); const fileName = backupFileName(); const localPath = join(dir, fileName);
     await dump(localPath); const size = (await stat(localPath)).size; if (!size) throw new Error('备份文件为空');
     const remotePath = `${config.path.replace(/\/$/, '')}/${fileName}`; await transport.upload(localPath, remotePath, config);
-    const files = await transport.list(config.path, config); const deleted = selectBackupDeletions(files, config.retention); for (const name of deleted) await transport.remove(`${config.path.replace(/\/$/, '')}/${name}`, config);
+    // sftp 在 ls 失败（目录不存在/不可读）时仍以退出码 0 结束，只把错误写到 stderr。
+    // 不校验上传结果的话，list() 会静默返回空列表，清理不发生却仍记录成功。
+    const files = await transport.list(config.path, config);
+    if (!files.some((file) => file.name === fileName)) throw new Error('远程备份列表未包含本次上传的文件');
+    const deleted = selectBackupDeletions(files, config.retention); for (const name of deleted) await transport.remove(`${config.path.replace(/\/$/, '')}/${name}`, config);
     await recordStatus('success', '', fileName);
     if (record) await prisma.remoteBackupRecord.update({ where: { id: record.id }, data: { status: 'SUCCEEDED', finishedAt: new Date(), fileName, fileSize: size, deletedCount: deleted.length, deletedFiles: deleted } });
     await observeBackupAlert(reporter ? () => reporter.recovery() : undefined);

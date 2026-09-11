@@ -36,6 +36,8 @@ test('retention deletion only removes oldest matching monitor files', () => {
 
 // 现场实测的 sftp 客户端输出：带路径参数时 name 列是完整路径且 nlink 为 "?"（OpenSSH 9.6 客户端），
 // 先 cd 再相对列目录时是 basename。
+const LISTING_NOW = new Date('2026-09-11T12:00:00.000Z');
+
 const REAL_SFTP_LISTING = [
   'sftp> ls -l /app/ai/backups/',
   '-rw-r--r--    ? root     root      4836541 Aug 15 08:39 /app/ai/backups/relay-monitor-sub2api-20260815083925-beb190c9.tar.gz',
@@ -49,7 +51,7 @@ const REAL_SFTP_LISTING = [
 ].join('\n');
 
 test('sftp listing parses absolute-path and basename forms and keeps only strict backup names', () => {
-  const parsed = parseSftpListing(REAL_SFTP_LISTING);
+  const parsed = parseSftpListing(REAL_SFTP_LISTING, LISTING_NOW);
   assert.deepEqual(parsed.map((file) => file.name), [
     'relay-monitor-sub2api-20260815132337-ed080486.sql.gz',
     'relay-monitor-sub2api-20260816095633-c93e1a88.sql.gz',
@@ -59,13 +61,41 @@ test('sftp listing parses absolute-path and basename forms and keeps only strict
   ]);
   assert.equal(parsed[0].modifiedAt.toISOString(), '2026-08-15T13:23:00.000Z');
   assert.equal(parsed[4].modifiedAt.toISOString(), '2026-09-02T14:00:00.000Z');
-  assert.deepEqual(parseSftpListing('sftp> ls -l /app/ai/backups\n'), []);
+  assert.deepEqual(parseSftpListing('sftp> ls -l /app/ai/backups\n', LISTING_NOW), []);
 });
 
 test('retention applies to the real absolute-path listing that previously matched nothing', () => {
-  assert.deepEqual(selectBackupDeletions(parseSftpListing(REAL_SFTP_LISTING), 4), [
+  assert.deepEqual(selectBackupDeletions(parseSftpListing(REAL_SFTP_LISTING, LISTING_NOW), 4), [
     'relay-monitor-sub2api-20260815132337-ed080486.sql.gz',
   ]);
+});
+
+test('a listing that fails to show the uploaded file fails the run instead of recording success', async () => {
+  // sftp exits 0 when ls fails (error only on stderr), so an unreadable or wrong
+  // directory yields an empty list. The run must not record success in that case.
+  const listing = parseSftpListing('sftp> ls -l /app/ai/backups/\nsftp> ', LISTING_NOW);
+  const dir = await mkdtemp(join(tmpdir(), 'backup-guard-'));
+  const dumpPath = join(dir, 'dump.sql.gz');
+  const status: string[] = [];
+  const config = validateBackupConfig({ host: 'host', username: 'user', password: 'secret', path: '/srv', retention: 1, enabled: true });
+  try {
+    await writeFile(dumpPath, 'x');
+    const run = runRemoteBackup(
+      config,
+      {
+        upload: async () => undefined,
+        list: async () => listing,
+        remove: async () => { throw new Error('must not delete when the upload is unverifiable'); },
+      },
+      async (path) => { await writeFile(path, 'dump'); },
+      async (nextStatus) => { status.push(nextStatus); },
+      false,
+    );
+    await assert.rejects(run, /远程备份列表未包含本次上传的文件/);
+    assert.ok(!status.includes('success'), `run must not report success, saw ${JSON.stringify(status)}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('Sub2API dump scope follows the reference policy and keeps credentials out of argv', () => {
@@ -158,9 +188,10 @@ test('SFTP timestamps sort cross-year files correctly', () => {
 
 test('backup removes local temporary state after successful upload and cleanup', async () => {
   const calls: string[] = [];
+  let uploaded = '';
   const result = await runRemoteBackup(
     validateBackupConfig({ host: 'host', username: 'user', password: 'secret', path: '/srv', retention: 1 }),
-    { upload: async (local, remote) => { calls.push(`upload:${local}:${remote}`); }, list: async () => [{ name: 'relay-monitor-sub2api-20260101000000-aaaaaaaa.sql.gz', modifiedAt: new Date(0) }, { name: 'relay-monitor-sub2api-20260102000000-bbbbbbbb.sql.gz', modifiedAt: new Date() }], remove: async (remote) => { calls.push(`remove:${remote}`); } },
+    { upload: async (local, remote) => { uploaded = remote; calls.push(`upload:${local}:${remote}`); }, list: async () => [{ name: 'relay-monitor-sub2api-20260101000000-aaaaaaaa.sql.gz', modifiedAt: new Date(0) }, { name: uploaded.split('/').pop()!, modifiedAt: new Date() }], remove: async (remote) => { calls.push(`remove:${remote}`); } },
     async (path) => { const { writeFile } = await import('node:fs/promises'); await writeFile(path, 'dump'); }, async () => {}, false,
   );
   assert.equal(result.deleted.length, 1);
@@ -172,9 +203,10 @@ test('real backup execution triggers a redacted failure and recovers after succe
   const alerts: Array<{ phase: 'failure' | 'recovery'; detail?: string }> = [];
   let failUpload = true;
   const config = validateBackupConfig({ host: 'host', username: 'user', password: 'secret', path: '/srv', retention: 1 });
+  let uploadedRemote = '';
   const transport = {
-    upload: async () => { if (failUpload) throw new Error('password=hunter2 upload failed'); },
-    list: async () => [],
+    upload: async (_local: string, remote: string) => { if (failUpload) throw new Error('password=hunter2 upload failed'); uploadedRemote = remote; },
+    list: async () => uploadedRemote ? [{ name: uploadedRemote.split('/').pop()!, modifiedAt: new Date() }] : [],
     remove: async () => undefined,
   };
   const reporter = {
