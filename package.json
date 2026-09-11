@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "pnpm run docs:build && next build",
+    "build": "vitepress build docs-site && next build",
     "docs:build": "vitepress build docs-site",
     "start": "next start",
     "lint": "next lint",

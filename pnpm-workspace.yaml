@@ -1,8 +1,0 @@
-# pnpm 10+ reads these settings here; the package.json "pnpm" field is ignored
-# by the version used for deployment, which enforces strict build approvals.
-packages:
-  - '.'
-onlyBuiltDependencies:
-  - '@prisma/engines'
-  - prisma
-  - unrs-resolver
