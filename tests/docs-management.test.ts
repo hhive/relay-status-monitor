@@ -44,8 +44,11 @@ test('syncFeishuDocs fetches raw content and publishes VitePress source', async 
     runBuild: async () => {},
   });
   assert.equal(result.status, 'succeeded');
-  assert.equal(await readFile(path.join(cwd, 'docs-site/feishu.md'), 'utf8'), '---\ntitle: 飞书同步文档\n---\n\n# Synced\n\nHello from Feishu.\n');
-  assert.match(await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8'), /<h1>Synced<\/h1>/);
+  assert.equal(await readFile(path.join(cwd, 'docs-site/feishu.md'), 'utf8'), '---\ntitle: Synced\n---\n\n# Synced\n\nHello from Feishu.\n');
+  const page = await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8');
+  assert.match(page, /<title>Synced<\/title>/);
+  assert.match(page, /<h1 id="synced">Synced<\/h1>/);
+  assert.match(page, /<article class="vp-doc">/);
   assert.match(String(calls[1]?.init?.headers && new Headers(calls[1].init?.headers).get('authorization')), /Bearer test-token/);
 });
 
@@ -85,11 +88,11 @@ test('syncFeishuDocs prefers structured Docx blocks for headings, links, and ima
   const result = await syncFeishuDocs({ cwd, env: { FEISHU_DOC_URL: 'https://example.feishu.cn/docx/abc', FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret' } as unknown as NodeJS.ProcessEnv, fetchImpl, runBuild: async () => {} });
   assert.equal(result.status, 'succeeded');
   const html = await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8');
-  assert.match(html, /结构化标题/);
-  assert.match(html, /https:\/\/example\.com/);
+  assert.match(html, /<h2 id="[^"]*">结构化标题<\/h2>/);
+  assert.match(html, /<a href="https:\/\/example\.com" target="_blank" rel="noreferrer noopener">/);
   assert.match(html, /<img src="\/docs\/assets\/feishu\/image-token\.png"/);
-  assert.match(html, /img\{display:block;width:70%;max-width:70%;/);
-  assert.match(html, /@media \(max-width:640px\)\{img\{width:100%;max-width:100%;\}\}/);
+  assert.match(html, /\.vp-doc p>img\{max-width:640px/);
+  assert.match(html, /class="doc-lightbox"/);
   assert.deepEqual([...await readFile(path.join(cwd, 'public/docs/assets/feishu/image-token.png'))], [1, 2, 3]);
 });
 
@@ -106,7 +109,7 @@ test('syncFeishuDocs preserves Docx rich-text document links', async () => {
   const result = await syncFeishuDocs({ cwd, env: { FEISHU_DOC_URL: 'https://example.feishu.cn/docx/abc', FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret' } as unknown as NodeJS.ProcessEnv, fetchImpl, runBuild: async () => {} });
   assert.equal(result.status, 'succeeded');
   const html = await readFile(path.join(cwd, 'public/docs/index.html'), 'utf8');
-  assert.match(html, /<a href="https:\/\/example\.feishu\.cn\/docx\/linked-doc" rel="noreferrer">查看文档<\/a>/);
+  assert.match(html, /<a href="https:\/\/example\.feishu\.cn\/docx\/linked-doc" target="_blank" rel="noreferrer noopener">查看文档<\/a>/);
 });
 
 test('syncFeishuDocs reports missing configuration without network calls', async () => {
@@ -144,7 +147,7 @@ test('importZipDocument publishes markdown and rewrites relative assets', async 
   const doc = await importZipDocument(zip, { id: 'guide', title: 'Guide' }, { cwd, env: { DOCS_DATA_DIR: 'content' } as unknown as NodeJS.ProcessEnv });
   assert.equal(doc.id, 'guide'); assert.match(doc.content, /\/docs\/guide\/assets\/shot\.png/); assert.match(doc.content, /\/docs\/guide\/files\/app\.bin/);
   assert.deepEqual([...await readFile(path.join(cwd, 'public/docs/guide/assets/shot.png'))], [1, 2, 3]);
-  assert.match(await readFile(path.join(cwd, 'public/docs/guide/index.html'), 'utf8'), /<h1>Guide<\/h1>/);
+  assert.match(await readFile(path.join(cwd, 'public/docs/guide/index.html'), 'utf8'), /<h1 id="guide">Guide<\/h1>/);
 });
 
 test('importZipDocument rejects traversal entries', async () => {

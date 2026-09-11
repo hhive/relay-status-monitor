@@ -3,71 +3,13 @@ import { mkdir, rename, writeFile, readdir, readFile, unlink, stat } from 'node:
 import { inflateRawSync } from 'node:zlib';
 import path from 'node:path';
 import { getSetting, setSetting, FeishuSettingKeys } from '@/lib/settings';
+import { blocksToMarkdown, type FeishuBlock } from '@/lib/docs-feishu';
+import { deriveDocumentTitle, renderDocsPage } from '@/lib/docs-render';
 
 export type DocsSyncStatus = 'idle' | 'running' | 'succeeded' | 'failed';
 export interface DocsSyncState { status: DocsSyncStatus; lastRunAt: string | null; message: string; }
 
 let state: DocsSyncState = { status: 'idle', lastRunAt: null, message: '尚未执行同步' };
-function renderFeishuHtml(markdown: string): string {
-  const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const inline = (value: string) => {
-    const links: string[] = [];
-    const withPlaceholders = value.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label: string, url: string) => {
-      const index = links.push(`<a href="${escape(url)}" rel="noreferrer">${escape(label)}</a>`) - 1;
-      return `@@FEISHU_LINK_${index}@@`;
-    });
-    return escape(withPlaceholders)
-      .replace(/https:\/\/[^\s<]+/g, (url) => `<a href="${url}" rel="noreferrer">${url}</a>`)
-      .replace(/@@FEISHU_LINK_(\d+)@@/g, (_, index: string) => links[Number(index)] ?? '');
-  };
-  const body = markdown.split(/\r?\n/).map((line) => {
-    const image = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
-    if (image) return `<figure><img src="${escape(image[2])}" alt="${escape(image[1])}" loading="lazy"></figure>`;
-    if (/^### /.test(line)) return `<h3>${escape(line.slice(4))}</h3>`;
-    if (/^## /.test(line)) return `<h2>${escape(line.slice(3))}</h2>`;
-    if (/^# /.test(line)) return `<h1>${escape(line.slice(2))}</h1>`;
-    if (/^[-*] /.test(line)) return `<li>${escape(line.slice(2))}</li>`;
-    return line.trim() ? `<p>${inline(line)}</p>` : '';
-  }).join('\n').replace(/(<li>.*<\/li>\n?)+/g, (items) => `<ul>${items}</ul>`);
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>飞书同步文档</title><style>body{margin:0;background:#f8fafc;color:#1f2937;font:16px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:860px;margin:0 auto;padding:48px 24px 80px;background:#fff;min-height:100vh;box-sizing:border-box}h1{font-size:32px;line-height:1.25;margin:0 0 28px;border-bottom:1px solid #e5e7eb;padding-bottom:18px}h2{font-size:24px;margin-top:32px}h3{font-size:19px;margin-top:24px}p{margin:12px 0}ul{padding-left:24px}a{color:#2563eb;text-decoration:none}a:hover{text-decoration:underline}figure{margin:20px 0}img{display:block;width:70%;max-width:70%;height:auto;border:1px solid #e5e7eb}@media (max-width:640px){img{width:100%;max-width:100%;}}</style></head><body><main>${body}</main></body></html>`;
-}
-
-type FeishuTextElement = { text_run?: { content?: string; text_element_style?: { link?: { url?: string } } } };
-type FeishuTextBlock = { elements?: FeishuTextElement[] };
-type FeishuBlock = {
-  block_id?: string;
-  block_type?: number;
-  page?: FeishuTextBlock;
-  text?: FeishuTextBlock;
-  heading1?: FeishuTextBlock;
-  heading2?: FeishuTextBlock;
-  heading3?: FeishuTextBlock;
-  bullet?: FeishuTextBlock;
-  ordered?: FeishuTextBlock;
-  image?: { token?: string };
-};
-
-function textElements(payload?: FeishuTextBlock): string {
-  return payload?.elements?.map((element) => {
-    const text = element.text_run?.content ?? '';
-    const url = element.text_run?.text_element_style?.link?.url;
-    return url && /^https?:\/\//.test(url) ? `[${text}](${url})` : text;
-  }).join('') ?? '';
-}
-
-function blocksToMarkdown(items: FeishuBlock[]): string {
-  return items.flatMap((block) => {
-    const type = block.block_type as number;
-    if (type === 3) return [`# ${textElements(block.heading1)}`];
-    if (type === 4) return [`## ${textElements(block.heading2)}`];
-    if (type === 5) return [`### ${textElements(block.heading3)}`];
-    if (type === 27) return [`![飞书图片](@@FEISHU_ASSET:${block.image?.token ?? block.block_id}@@)`];
-    if (type === 12 || type === 13) return [`- ${textElements(block.bullet) || textElements(block.ordered)}`];
-    const payload = block.text ?? block.page;
-    if (payload?.elements) return [textElements(payload)];
-    return [];
-  }).join('\n\n');
-}
 
 async function downloadFeishuAssets(markdown: string, base: string, accessToken: string, publicDocs: string, fetchImpl: typeof fetch): Promise<string> {
   const tokens = [...markdown.matchAll(/@@FEISHU_ASSET:([A-Za-z0-9_-]+)@@/g)].map((match) => match[1]);
@@ -164,9 +106,10 @@ export async function syncFeishuDocs(options: FeishuSyncOptions = {}): Promise<D
     const output = path.resolve(cwd, stored?.output || env.FEISHU_DOC_OUTPUT || defaultOutput);
     await mkdir(path.dirname(output), { recursive: true });
     const temporary = `${output}.tmp-${process.pid}`;
-    await writeFile(temporary, `---\ntitle: 飞书同步文档\n---\n\n${content.trim()}\n`, 'utf8');
+    const title = deriveDocumentTitle(content, '飞书同步文档');
+    await writeFile(temporary, `---\ntitle: ${title}\n---\n\n${content.trim()}\n`, 'utf8');
     await rename(temporary, output);
-    await writeFile(path.join(publicDocs, 'index.html'), renderFeishuHtml(content.trim()), 'utf8');
+    await writeFile(path.join(publicDocs, 'index.html'), await renderDocsPage({ markdown: content.trim(), title, assetsDir: path.join(publicDocs, 'assets') }), 'utf8');
     if (options.runBuild) await options.runBuild();
     state = { status: 'succeeded', lastRunAt: now, message: `同步成功：${documentId}` };
   } catch (error) {
@@ -256,7 +199,10 @@ export async function importZipDocument(buffer: Buffer, input: { id: string; tit
   const rewrite = (value: string) => { if (/^(?:https?:|\/|#|data:)/i.test(value)) return value; const normalized = path.posix.normalize(path.posix.join(path.posix.dirname(markdown.name), value)); if (normalized.startsWith('../') || !names.has(normalized)) return value; return `/docs/${encodeURIComponent(id)}/${normalized.split('/').map(encodeURIComponent).join('/')}`; };
   content = content.replace(/(!?\[[^\]]*\]\()([^\s)]+)(\))/g, (_, prefix, target, suffix) => `${prefix}${rewrite(target)}${suffix}`);
   for (const entry of entries) { if (entry.name.endsWith('/') || entry.name === markdown.name) continue; const normalized = path.posix.normalize(entry.name); const target = path.join(publishRoot, ...normalized.split('/')); await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, extractZipEntry(buffer, entry)); }
-  await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, `---\ntitle: ${(input.title ?? id).trim() || id}\n---\n\n${content.trim()}\n`, 'utf8'); await writeFile(path.join(publishRoot, 'index.html'), renderFeishuHtml(content.trim()), 'utf8'); return readDocument(file, id, 'local');
+  const title = (input.title ?? id).trim() || id;
+  await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, `---\ntitle: ${title}\n---\n\n${content.trim()}\n`, 'utf8');
+  await writeFile(path.join(publishRoot, 'index.html'), await renderDocsPage({ markdown: content.trim(), title, assetsDir: path.join(publicRoot, 'assets') }), 'utf8');
+  return readDocument(file, id, 'local');
 }
 async function readDocument(file: string, id: string, source: ManagedDocumentSource): Promise<ManagedDocument> {
   const [raw, metadata] = await Promise.all([readFile(file, 'utf8'), stat(file)]);
